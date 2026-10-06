@@ -130,15 +130,23 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     }
   }, [sortedDiaries]);
 
-  // Calculate cumulative distance along chronological trail
+  // Calculate cumulative distance along chronological trail starting from the 10/23 bicycle shop visit entry
   useEffect(() => {
+    const bikeShopIndex = sortedDiaries.findIndex(
+      (d) => (d.date && d.date.includes('10-23')) || 
+             (d.title && (d.title.includes('자전거') || d.title.includes('가게') || d.title.includes('가계') || d.title.includes('샵'))) ||
+             (d.content && (d.content.includes('자전거') || d.content.includes('가게') || d.content.includes('가계')))
+    );
+    const startIndex = bikeShopIndex !== -1 ? bikeShopIndex : 0;
+    const relevantDiaries = sortedDiaries.slice(startIndex);
+
     let dist = 0;
-    for (let i = 0; i < sortedDiaries.length - 1; i++) {
+    for (let i = 0; i < relevantDiaries.length - 1; i++) {
       dist += calculateDistanceKm(
-        sortedDiaries[i].location.lat,
-        sortedDiaries[i].location.lng,
-        sortedDiaries[i + 1].location.lat,
-        sortedDiaries[i + 1].location.lng
+        relevantDiaries[i].location.lat,
+        relevantDiaries[i].location.lng,
+        relevantDiaries[i + 1].location.lat,
+        relevantDiaries[i + 1].location.lng
       );
     }
     setTotalDistance(Math.round(dist * 10) / 10);

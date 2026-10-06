@@ -17,6 +17,7 @@ import {
 } from './services/diaryFirestore';
 import { recordVisitorLocation, subscribeVisitorLogs } from './services/visitorService';
 import { optimizeAllDiaries } from './utils/imageCompressor';
+import { calculateDistanceKm } from './utils/geo';
 import { Navbar } from './components/Navbar';
 import { BlogFeedView } from './components/BlogFeedView';
 import { TravelMapView } from './components/TravelMapView';
@@ -45,7 +46,8 @@ import {
   MapPin, 
   Download,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Route
 } from 'lucide-react';
 
 export default function App() {
@@ -588,6 +590,35 @@ export default function App() {
     }
   };
 
+  // Calculate cumulative total travel distance starting from the 10/23 bicycle shop visit entry
+  const cumulativeDistanceKm = useMemo(() => {
+    const sorted = [...diaries].sort(
+      (a, b) => new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime()
+    );
+
+    if (sorted.length === 0) return 0;
+
+    const bikeShopIndex = sorted.findIndex(
+      (d) => (d.date && d.date.includes('10-23')) || 
+             (d.title && (d.title.includes('자전거') || d.title.includes('가게') || d.title.includes('가계') || d.title.includes('샵'))) ||
+             (d.content && (d.content.includes('자전거') || d.content.includes('가게') || d.content.includes('가계')))
+    );
+
+    const startIndex = bikeShopIndex !== -1 ? bikeShopIndex : 0;
+    const relevantDiaries = sorted.slice(startIndex);
+
+    let dist = 0;
+    for (let i = 0; i < relevantDiaries.length - 1; i++) {
+      dist += calculateDistanceKm(
+        relevantDiaries[i].location.lat,
+        relevantDiaries[i].location.lng,
+        relevantDiaries[i + 1].location.lat,
+        relevantDiaries[i + 1].location.lng
+      );
+    }
+    return Math.round(dist * 10) / 10;
+  }, [diaries]);
+
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col font-sans selection:bg-amber-200 selection:text-amber-900">
       {/* Top Navbar */}
@@ -612,19 +643,41 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Welcome & Mood Header (Shown on Blog, Timeline, and TimeOfDay views) */}
         {viewMode !== 'map' && (
-          <div className="mb-4 rounded-2xl bg-gradient-to-r from-stone-900 via-stone-800 to-amber-950 text-white p-3 sm:p-4 shadow-xl relative overflow-hidden border border-stone-800">
+          <div className="mb-6 rounded-2xl bg-gradient-to-r from-stone-900 via-stone-800 to-amber-950 text-white p-4 sm:p-5 shadow-xl relative overflow-hidden border border-stone-800">
             {/* Background ambient accents */}
             <div className="absolute -right-12 -top-12 w-64 h-64 rounded-full bg-amber-600/10 blur-3xl pointer-events-none" />
             <div className="absolute right-1/4 -bottom-16 w-48 h-48 rounded-full bg-amber-500/10 blur-2xl pointer-events-none" />
 
-            <div className="relative z-10 w-full">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold mb-1.5">
-                <Compass className="w-3.5 h-3.5" />
-                <span>{t('heroTag')}</span>
+            <div className="relative z-10 w-full flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex-1">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-semibold mb-2 shadow-2xs">
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>{t('heroTag')}</span>
+                </div>
+                <p className="text-xs sm:text-sm text-stone-300 leading-relaxed max-w-2xl">
+                  {t('heroDescription')}
+                </p>
               </div>
-              <p className="text-xs sm:text-sm text-stone-300 leading-relaxed">
-                {t('heroDescription')}
-              </p>
+
+              {/* Cumulative Total Travel Distance Dashboard Card */}
+              <div className="flex items-center gap-3.5 bg-stone-900/90 backdrop-blur-md px-5 py-3 rounded-xl border border-white/15 shadow-xl shrink-0 w-full md:w-auto">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <Route className="w-5 h-5" />
+                </div>
+                <div className="flex-1 md:flex-initial">
+                  <div className="text-[11px] text-stone-400 font-medium uppercase tracking-wider">
+                    {t('totalCumulativeDistance')}
+                  </div>
+                  <div className="text-lg sm:text-xl font-extrabold text-white flex items-baseline gap-1.5">
+                    <span>{cumulativeDistanceKm.toLocaleString()}</span>
+                    <span className="text-xs font-bold text-amber-400">km</span>
+                  </div>
+                </div>
+                <div className="hidden sm:block text-right text-[11px] text-stone-400 border-l border-stone-700 pl-3">
+                  <div>총 여정: <strong className="text-white">{diaries.length}개</strong></div>
+                  <div>방문지: <strong className="text-amber-300">{new Set(diaries.map(d => d.location.region.split(' ')[0])).size}곳</strong></div>
+                </div>
+              </div>
             </div>
           </div>
         )}
