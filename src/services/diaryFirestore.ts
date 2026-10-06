@@ -41,15 +41,22 @@ export function subscribeDiaries(
 
   const unsubscribe = onSnapshot(
     diariesCol,
-    (snapshot) => {
+    async (snapshot) => {
       const list: DiaryEntry[] = [];
       if (!snapshot.empty) {
-        snapshot.forEach((docSnap) => {
+        const promises = snapshot.docs.map(async (docSnap) => {
           const data = docSnap.data() as DiaryEntry;
           if (data && data.id && data.title) {
+            if (data.hasSubcollectionPhotos) {
+              const fullPhotos = await fetchDiaryFullPhotos(data.id);
+              if (fullPhotos.length > 0) {
+                data.photos = fullPhotos;
+              }
+            }
             list.push(data);
           }
         });
+        await Promise.all(promises);
       }
 
       // Merge with any offline changes that are pending sync and sort newest first
