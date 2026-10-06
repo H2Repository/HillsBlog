@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "TravelPhoto": {
+      "title": "TravelPhoto",
+      "description": "Attached HD travel photograph with caption",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique photo identifier"
+        },
+        "url": {
+          "type": "string",
+          "description": "HD photo image data URL or URL"
+        },
+        "caption": {
+          "type": "string",
+          "description": "Photo caption"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Photo timestamp"
+        },
+        "isCover": {
+          "type": "boolean",
+          "description": "Whether this photo is the cover image"
+        }
+      },
+      "required": ["id", "url"]
+    },
+    "DiaryEntry": {
+      "title": "DiaryEntry",
+      "description": "A bicycle touring journal entry with geolocation and photos",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the diary entry",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the travel entry",
+          "maxLength": 300
+        },
+        "content": {
+          "type": "string",
+          "description": "Story and body content of the diary",
+          "maxLength": 20000
+        },
+        "date": {
+          "type": "string",
+          "description": "Date of the journey (YYYY-MM-DD)",
+          "maxLength": 20
+        },
+        "time": {
+          "type": "string",
+          "description": "Time of the journey (HH:mm)",
+          "maxLength": 20
+        },
+        "location": {
+          "type": "object",
+          "description": "Geo location data including coordinates and address"
+        },
+        "photos": {
+          "type": "array",
+          "description": "List of photos attached to the diary"
+        },
+        "weather": {
+          "type": "string",
+          "description": "Weather condition during the ride",
+          "maxLength": 50
+        },
+        "moodTags": {
+          "type": "array",
+          "description": "Tags representing mood and style"
+        },
+        "localInsights": {
+          "type": "object",
+          "description": "Local food, recommendations, and solo rider tips"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Star rating from 1 to 5"
+        },
+        "views": {
+          "type": "number",
+          "description": "Total number of visitors who read this diary entry"
+        },
+        "hasSubcollectionPhotos": {
+          "type": "boolean",
+          "description": "Indicates whether additional attached photos are stored in the subcollection"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last updated timestamp in milliseconds"
+        }
+      },
+      "required": ["id", "title", "content", "date", "time", "location", "rating", "createdAt", "updatedAt"]
+    },
+    "VisitorLog": {
+      "title": "VisitorLog",
+      "description": "Log of a visitor's geolocation and reading session for administrative traffic analytics",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the visitor log entry",
+          "maxLength": 128
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Access timestamp in milliseconds"
+        },
+        "lat": {
+          "type": "number",
+          "description": "Visitor latitude"
+        },
+        "lng": {
+          "type": "number",
+          "description": "Visitor longitude"
+        },
+        "city": {
+          "type": "string",
+          "description": "Visitor city name",
+          "maxLength": 100
+        },
+        "country": {
+          "type": "string",
+          "description": "Visitor country name",
+          "maxLength": 100
+        },
+        "region": {
+          "type": "string",
+          "description": "Visitor province/region name",
+          "maxLength": 100
+        },
+        "diaryId": {
+          "type": "string",
+          "description": "ID of the diary read, or home",
+          "maxLength": 128
+        },
+        "diaryTitle": {
+          "type": "string",
+          "description": "Title of the diary read",
+          "maxLength": 300
+        },
+        "device": {
+          "type": "string",
+          "description": "Device category: mobile, desktop, or tablet",
+          "maxLength": 50
+        },
+        "ipMasked": {
+          "type": "string",
+          "description": "Anonymized IP representation",
+          "maxLength": 100
+        }
+      },
+      "required": ["id", "timestamp", "lat", "lng"]
+    }
+  },
+  "firestore": {
+    "/diaries/{diaryId}": {
+      "schema": "DiaryEntry",
+      "description": "Collection of all public bicycle travel diaries. General users have read-only access, only authenticated admin users can create, update, or delete."
+    },
+    "/diaries/{diaryId}/photos/{photoId}": {
+      "schema": "TravelPhoto",
+      "description": "Subcollection of HD travel photos attached to a diary entry allowing total diary creation up to 2MB"
+    },
+    "/visitor_logs/{logId}": {
+      "schema": "VisitorLog",
+      "description": "Collection of visitor geo-location logs. General visitors can create logs upon visiting, only admin users can read and clear logs."
+    }
+  }
+}
