@@ -111,10 +111,10 @@ export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
   const docRef = doc(db, DIARIES_COLLECTION, entry.id);
   const sanitized = sanitizeForFirestore(entry);
   
-  // Guard against 2MB max diary creation limit
+  // Guard against 5MB max diary creation limit
   const jsonSize = new TextEncoder().encode(JSON.stringify(sanitized)).length;
-  if (jsonSize > 2097152) {
-    throw new Error(`일기 데이터 전체 용량(${Math.round(jsonSize / 1024)}KB)이 최대 허용 용량인 2MB를 초과했습니다. 첨부된 사진 수를 줄여주세요.`);
+  if (jsonSize > 5 * 1024 * 1024) {
+    throw new Error(`일기 데이터 전체 용량(${Math.round(jsonSize / 1024)}KB)이 최대 허용 용량인 5MB를 초과했습니다. 첨부된 사진 수를 줄여주세요.`);
   }
 
   try {

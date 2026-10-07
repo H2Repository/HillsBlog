@@ -1,9 +1,9 @@
 import { DiaryEntry, TravelPhoto } from '../types';
 
-export const MAX_PHOTO_DIMENSION = 1280; // Standard High Definition (HD 1280px / 720p)
-export const MAX_DIARY_PAYLOAD_BYTES = 2 * 1024 * 1024; // 2MB max diary creation payload (including photos)
-export const MAX_HD_PHOTO_BYTES = 450 * 1024; // Maximum ~450KB per HD photo
-export const DEFAULT_JPEG_QUALITY = 0.83;
+export const MAX_PHOTO_DIMENSION = 1600; // High resolution up to 1600px
+export const MAX_DIARY_PAYLOAD_BYTES = 5 * 1024 * 1024; // 5MB max diary creation payload (including photos)
+export const MAX_HD_PHOTO_BYTES = 2 * 1024 * 1024; // Up to 2MB per photo
+export const DEFAULT_JPEG_QUALITY = 0.88;
 
 /**
  * Calculates bounding box dimensions so that neither width nor height exceeds maxDimension (HD 1280px),
