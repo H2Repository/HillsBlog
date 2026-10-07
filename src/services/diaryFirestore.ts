@@ -41,22 +41,15 @@ export function subscribeDiaries(
 
   const unsubscribe = onSnapshot(
     diariesCol,
-    async (snapshot) => {
+    (snapshot) => {
       const list: DiaryEntry[] = [];
       if (!snapshot.empty) {
-        const promises = snapshot.docs.map(async (docSnap) => {
+        snapshot.forEach((docSnap) => {
           const data = docSnap.data() as DiaryEntry;
           if (data && data.id && data.title) {
-            if (data.hasSubcollectionPhotos) {
-              const fullPhotos = await fetchDiaryFullPhotos(data.id);
-              if (fullPhotos.length > 0) {
-                data.photos = fullPhotos;
-              }
-            }
             list.push(data);
           }
         });
-        await Promise.all(promises);
       }
 
       // Merge with any offline changes that are pending sync and sort newest first
@@ -111,35 +104,15 @@ export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
   const docRef = doc(db, DIARIES_COLLECTION, entry.id);
   const sanitized = sanitizeForFirestore(entry);
   
-  // Guard against 2MB max diary creation limit
+  // Guard against 5MB max diary creation limit
   const jsonSize = new TextEncoder().encode(JSON.stringify(sanitized)).length;
-  if (jsonSize > 2097152) {
-    throw new Error(`일기 데이터 전체 용량(${Math.round(jsonSize / 1024)}KB)이 최대 허용 용량인 2MB를 초과했습니다. 첨부된 사진 수를 줄여주세요.`);
+  if (jsonSize > 5 * 1024 * 1024) {
+    throw new Error(`일기 데이터 전체 용량(${Math.round(jsonSize / 1024)}KB)이 최대 허용 용량인 5MB를 초과했습니다. 첨부된 사진 수를 줄여주세요.`);
   }
 
   try {
-    // If within standard single-doc limit (< 950KB), store all photos directly in the main document
-    if (jsonSize <= 950000) {
-      await setDoc(docRef, { ...sanitized, hasSubcollectionPhotos: false });
-    } else {
-      // For large diaries up to 2MB with multiple HD photos:
-      // Store all individual photos into subcollection /diaries/{entry.id}/photos/{photo.id}
-      const allPhotos = sanitized.photos || [];
-      const photosSubcolRef = collection(db, DIARIES_COLLECTION, entry.id, 'photos');
-      
-      for (const p of allPhotos) {
-        await setDoc(doc(photosSubcolRef, p.id), p);
-      }
-
-      // In the main document, keep cover photo for instant feed display and mark hasSubcollectionPhotos
-      const coverPhoto = allPhotos.find(p => p.isCover) || allPhotos[0];
-      const mainDocData = {
-        ...sanitized,
-        photos: coverPhoto ? [coverPhoto] : [],
-        hasSubcollectionPhotos: true,
-      };
-      await setDoc(docRef, mainDocData);
-    }
+    // Store all diary data and photos directly in the main document for maximum reliability
+    await setDoc(docRef, { ...sanitized, hasSubcollectionPhotos: false });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${DIARIES_COLLECTION}/${entry.id}`);
   }
