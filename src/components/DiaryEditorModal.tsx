@@ -431,7 +431,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     }
 
     if (isOverLimit) {
-      alert(`일기 작성 전체 용량(${formatBytes(currentPayloadBytes)})이 최대 허용 용량인 5MB를 초과했습니다. 첨부된 사진 수를 줄이거나 조절해주세요.`);
+      alert(`일기 작성 전체 용량(${formatBytes(currentPayloadBytes)})이 최대 허용 용량인 2MB를 초과했습니다. 첨부된 사진 수를 줄이거나 조절해주세요.`);
       return;
     }
 

@@ -32,8 +32,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const INITIAL_VISIBLE_COUNT = 4;
-const PAGE_SIZE = 4;
+const INITIAL_VISIBLE_COUNT = 2;
+const PAGE_SIZE = 2;
 
 interface BlogFeedViewProps {
   diaries: DiaryEntry[];
@@ -58,8 +58,12 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
 }) => {
   const { t, language } = useLanguage();
   const { isAdmin, openLoginModal } = useAuth();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRegion, setSelectedRegion] = useState<string>('ALL');
+  const [selectedTag, setSelectedTag] = useState<string>('ALL');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
 
+  const allLabel = t('filterAll');
   const translationVersion = useTranslationVersion();
 
   // Localize diaries according to active language
@@ -67,14 +71,54 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
     return diaries.map((d) => getLocalizedDiary(d, language));
   }, [diaries, language, translationVersion]);
 
+  // Extract unique regions
+  const availableRegions = useMemo(() => {
+    const set = new Set<string>();
+    localizedDiaries.forEach((d) => {
+      const topArea = d.location.region.split(' ')[0] || d.location.region;
+      if (topArea) set.add(topArea);
+    });
+    return ['ALL', ...Array.from(set)];
+  }, [localizedDiaries]);
+
+  // Extract unique tags
+  const availableTags = useMemo(() => {
+    const set = new Set<string>();
+    localizedDiaries.forEach((d) => {
+      d.moodTags.forEach((t) => set.add(t));
+    });
+    return ['ALL', ...Array.from(set)];
+  }, [localizedDiaries]);
+
   // Total visitor reads count across all diaries
   const totalViews = useMemo(() => {
     return diaries.reduce((acc, d) => acc + (d.views || 0), 0);
   }, [diaries]);
 
-  // Sort diaries (strictly newest travel date/time first by default)
-  const sortedDiaries = useMemo(() => {
-    return [...localizedDiaries].sort((a, b) => {
+  // Filter & sort diaries (strictly newest travel date/time first by default)
+  const filteredDiaries = useMemo(() => {
+    const list = localizedDiaries.filter((d) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        !q ||
+        d.title.toLowerCase().includes(q) ||
+        d.content.toLowerCase().includes(q) ||
+        d.location.region.toLowerCase().includes(q) ||
+        d.location.address.toLowerCase().includes(q) ||
+        d.moodTags.some((t) => t.toLowerCase().includes(q));
+
+      const matchesRegion =
+        selectedRegion === 'ALL' ||
+        d.location.region.includes(selectedRegion);
+
+      const matchesTag =
+        selectedTag === 'ALL' ||
+        d.moodTags.includes(selectedTag);
+
+      return matchesSearch && matchesRegion && matchesTag;
+    });
+
+    return list.sort((a, b) => {
       const dateTimeA = `${a.date || ''} ${a.time || ''}`.trim();
       const dateTimeB = `${b.date || ''} ${b.time || ''}`.trim();
 
@@ -94,20 +138,20 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
       const updatedB = b.updatedAt || 0;
       return sortOrder === 'newest' ? updatedB - updatedA : updatedA - updatedB;
     });
-  }, [localizedDiaries, sortOrder]);
+  }, [localizedDiaries, searchQuery, selectedRegion, selectedTag, sortOrder]);
 
-  // Visible diaries count (initially 4, increments by 4 on '다음보기')
+  // Visible diaries count (initially 2, increments by 2 on '더보기')
   const [visibleCount, setVisibleCount] = useState<number>(INITIAL_VISIBLE_COUNT);
 
-  // Reset pagination back to 4 whenever sort order changes
+  // Reset pagination back to 2 whenever search query, region, tag, or sort order changes
   useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE_COUNT);
-  }, [sortOrder]);
+  }, [searchQuery, selectedRegion, selectedTag, sortOrder]);
 
   // Paginated slice of diaries to display
   const displayedDiaries = useMemo(() => {
-    return sortedDiaries.slice(0, visibleCount);
-  }, [sortedDiaries, visibleCount]);
+    return filteredDiaries.slice(0, visibleCount);
+  }, [filteredDiaries, visibleCount]);
 
   const weatherIcons: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
     sunny: { label: t('editorWeatherSunny'), icon: Sun },
@@ -120,90 +164,145 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Blog Feed Header Bar (Sort & Stats) */}
-      <div className="bg-white rounded-xl p-3 border border-stone-200/90 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-stone-700">
-            {t('totalDiaries', { count: sortedDiaries.length })}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-end">
-          {/* Sort Order Selector (Newest First / Oldest First) with Icons */}
-          <div className="inline-flex items-center gap-0.5 bg-stone-100 p-0.5 rounded-lg border border-stone-200 text-xs">
-            <button
-              type="button"
-              onClick={() => setSortOrder('newest')}
-              className={`p-1.5 rounded transition cursor-pointer flex items-center justify-center ${
-                sortOrder === 'newest'
-                  ? 'bg-white text-stone-900 shadow-2xs font-bold'
-                  : 'text-stone-500 hover:text-stone-800'
-              }`}
-              title="최신순 (최신 일기부터 정렬)"
-              aria-label="최신순 정렬"
-            >
-              <ArrowDownWideNarrow className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setSortOrder('oldest')}
-              className={`p-1.5 rounded transition cursor-pointer flex items-center justify-center ${
-                sortOrder === 'oldest'
-                  ? 'bg-white text-stone-900 shadow-2xs font-bold'
-                  : 'text-stone-500 hover:text-stone-800'
-              }`}
-              title="오래된순 (과거 일기부터 정렬)"
-              aria-label="오래된순 정렬"
-            >
-              <ArrowUpNarrowWide className="w-3.5 h-3.5" />
-            </button>
+      {/* Blog Feed Search & Filter Bar */}
+      <div className="bg-white rounded-xl p-3 border border-stone-200/90 shadow-sm space-y-2">
+        <div className="flex flex-col sm:flex-row items-center gap-2">
+          {/* Search Input */}
+          <div className="relative flex-1 w-full">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('searchPlaceholder')}
+              className="w-full pl-10 pr-4 py-2 text-xs rounded-lg border border-stone-300 bg-stone-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 transition"
+            />
           </div>
 
-          {isAdmin && (
-            <>
-              <span className="text-stone-300">•</span>
-              <span 
-                className="flex items-center gap-1.5 text-xs text-amber-800 font-medium whitespace-nowrap bg-amber-50/90 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-2xs"
-                title={t('totalVisitorsReads')}
+          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-end">
+            {/* Sort Order Selector (Newest First / Oldest First) with Icons */}
+            <div className="inline-flex items-center gap-0.5 bg-stone-100 p-0.5 rounded-lg border border-stone-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setSortOrder('newest')}
+                className={`p-1.5 rounded transition cursor-pointer flex items-center justify-center ${
+                  sortOrder === 'newest'
+                    ? 'bg-white text-stone-900 shadow-2xs font-bold'
+                    : 'text-stone-500 hover:text-stone-800'
+                }`}
+                title="최신순 (최신 일기부터 정렬)"
+                aria-label="최신순 정렬"
               >
-                <Eye className="w-3.5 h-3.5 text-amber-600" />
-                <span className="hidden">{t('totalVisitorsReads')}: {totalViews.toLocaleString()}</span>
-                
-                {onOpenVisitorModal && (
-                  <button
-                    type="button"
-                    onClick={onOpenVisitorModal}
-                    className="ml-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 text-sky-800 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
-                    title="방문자 위치 지도 및 통계 보기"
-                  >
-                    <MapPin className="w-2.5 h-2.5 text-sky-600" />
-                    <span className="hidden">위치확인</span>
-                  </button>
-                )}
+                <ArrowDownWideNarrow className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortOrder('oldest')}
+                className={`p-1.5 rounded transition cursor-pointer flex items-center justify-center ${
+                  sortOrder === 'oldest'
+                    ? 'bg-white text-stone-900 shadow-2xs font-bold'
+                    : 'text-stone-500 hover:text-stone-800'
+                }`}
+                title="오래된순 (과거 일기부터 정렬)"
+                aria-label="오래된순 정렬"
+              >
+                <ArrowUpNarrowWide className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-                {onResetAllViews && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('방문자 카운터를 모두 0으로 초기화하시겠습니까?')) {
-                        onResetAllViews();
-                      }
-                    }}
-                    className="ml-1 p-0.5 text-amber-600 hover:text-rose-600 hover:bg-amber-100/80 rounded transition cursor-pointer"
-                    title="방문자 수 0으로 초기화"
-                    aria-label="방문자 수 0으로 초기화"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                  </button>
-                )}
-              </span>
-            </>
-          )}
+            <span className="text-xs text-stone-500 whitespace-nowrap">
+              {t('totalDiaries', { count: filteredDiaries.length })}
+            </span>
+            {isAdmin && (
+              <>
+                <span className="text-stone-300">•</span>
+                <span 
+                  className="flex items-center gap-1.5 text-xs text-amber-800 font-medium whitespace-nowrap bg-amber-50/90 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-2xs"
+                  title={t('totalVisitorsReads')}
+                >
+                  <Eye className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="hidden">{t('totalVisitorsReads')}: {totalViews.toLocaleString()}</span>
+                  
+                  {onOpenVisitorModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenVisitorModal}
+                      className="ml-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 text-sky-800 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                      title="방문자 위치 지도 및 통계 보기"
+                    >
+                      <MapPin className="w-2.5 h-2.5 text-sky-600" />
+                      <span className="hidden">위치확인</span>
+                    </button>
+                  )}
+
+                  {onResetAllViews && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm('방문자 카운터를 모두 0으로 초기화하시겠습니까?')) {
+                          onResetAllViews();
+                        }
+                      }}
+                      className="ml-1 p-0.5 text-amber-600 hover:text-rose-600 hover:bg-amber-100/80 rounded transition cursor-pointer"
+                      title="방문자 수 0으로 초기화"
+                      aria-label="방문자 수 0으로 초기화"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                    </button>
+                  )}
+                </span>
+              </>
+            )}
+          </div>
         </div>
+
+        {/* Region Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+          <span className="text-stone-400 font-medium shrink-0 mr-1">
+            {t('filterRegionLabel')}
+          </span>
+          {availableRegions.map((region) => (
+            <button
+              key={region}
+              type="button"
+              onClick={() => setSelectedRegion(region)}
+              className={`px-2.5 py-0.5 rounded-full text-[11px] whitespace-nowrap transition font-medium ${
+                selectedRegion === region
+                  ? 'bg-stone-900 text-white shadow-sm'
+                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+              }`}
+            >
+              {region === 'ALL' ? allLabel : region}
+            </button>
+          ))}
+        </div>
+
+        {/* Mood Tag Chips */}
+        {availableTags.length > 1 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-1 border-t border-stone-100 text-xs">
+            <span className="text-stone-400 font-medium shrink-0 mr-1">
+              {t('filterTagLabel')}
+            </span>
+            {availableTags.slice(0, 8).map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setSelectedTag(tag)}
+                className={`px-2.5 py-0.5 rounded-full text-[11px] whitespace-nowrap transition ${
+                  selectedTag === tag
+                    ? 'bg-amber-100 text-amber-900 font-semibold border border-amber-300'
+                    : 'bg-stone-50 text-stone-500 hover:bg-stone-100'
+                }`}
+              >
+                {tag === 'ALL' ? allLabel : tag}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Diary Feed List */}
-      {sortedDiaries.length > 0 ? (
+      {filteredDiaries.length > 0 ? (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {displayedDiaries.map((diary) => {
@@ -413,27 +512,25 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
           })}
         </div>
 
-        {/* Load More (다음보기) Button & Icon */}
-        {sortedDiaries.length > visibleCount && (
-          <div className="flex flex-col items-center justify-center pt-4 pb-2">
+        {/* Load More (더보기) Button & Status */}
+        {filteredDiaries.length > visibleCount && (
+          <div className="flex flex-col items-center justify-center pt-2 pb-2">
             <button
               id="btn-load-more-diaries"
               type="button"
               onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
-              className="group inline-flex items-center gap-2.5 px-6 py-3.5 rounded-2xl bg-white hover:bg-amber-50 text-stone-900 hover:text-amber-800 font-bold text-xs sm:text-sm border border-stone-200 hover:border-amber-300 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer active:scale-95"
+              className="group inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white hover:bg-amber-50/80 text-stone-800 hover:text-amber-800 font-semibold text-xs sm:text-sm border border-stone-200 hover:border-amber-300 shadow-xs hover:shadow transition-all duration-200 cursor-pointer active:scale-95"
             >
-              <span>다음 일기 더보기</span>
-              <div className="w-6 h-6 rounded-full bg-amber-100 group-hover:bg-amber-200 text-amber-800 flex items-center justify-center transition-transform duration-200 group-hover:translate-y-0.5">
-                <ChevronDown className="w-4 h-4" />
-              </div>
+              <span>{t('loadMoreDiaries')}</span>
+              <ChevronDown className="w-4 h-4 text-stone-500 group-hover:text-amber-600 transition-transform duration-200 group-hover:translate-y-0.5" />
             </button>
             <p className="text-[11px] text-stone-400 mt-2 font-medium">
-              {t('showingDiariesCount', { current: displayedDiaries.length, total: sortedDiaries.length })}
+              {t('showingDiariesCount', { current: displayedDiaries.length, total: filteredDiaries.length })}
             </p>
           </div>
         )}
 
-        {sortedDiaries.length > INITIAL_VISIBLE_COUNT && visibleCount >= sortedDiaries.length && (
+        {filteredDiaries.length > INITIAL_VISIBLE_COUNT && visibleCount >= filteredDiaries.length && (
           <div className="text-center py-2 text-xs text-stone-400 font-medium">
             ✓ {t('allDiariesLoaded')}
           </div>
