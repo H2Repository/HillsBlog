@@ -32,8 +32,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const INITIAL_VISIBLE_COUNT = 2;
-const PAGE_SIZE = 2;
+const INITIAL_VISIBLE_COUNT = 12;
+const PAGE_SIZE = 12;
 
 interface BlogFeedViewProps {
   diaries: DiaryEntry[];
@@ -405,7 +405,7 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                       }}
                       className="text-lg font-bold text-stone-900 group-hover:text-amber-700 transition cursor-pointer leading-snug line-clamp-2 mb-2"
                     >
-                      {diary.title}
+                      {diary.title || '제목 없음'}
                     </h2>
 
                     {/* Content Snippet */}
@@ -414,22 +414,24 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                         const original = diaries.find(item => item.id === diary.id) || diary;
                         onSelectDiary(original);
                       }}
-                      className="text-xs text-stone-600 line-clamp-3 leading-relaxed font-serif cursor-pointer"
+                      className="text-xs text-stone-600 line-clamp-3 leading-relaxed font-serif cursor-pointer whitespace-pre-line"
                     >
-                      {diary.content}
+                      {diary.content || '(일기 내용이 없습니다)'}
                     </p>
                   </div>
 
                   {/* Regional Insights Highlight Pill */}
-                  <div className="bg-amber-50/70 border border-amber-200/60 rounded-xl p-2.5 text-xs text-stone-700">
-                    <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-1">
-                      <Sparkles className="w-3 h-3 text-amber-600" />
-                      <span>{t('detailCourseInfo')}</span>
+                  {diary.localInsights?.recommendedForSolo && (
+                    <div className="bg-amber-50/70 border border-amber-200/60 rounded-xl p-2.5 text-xs text-stone-700">
+                      <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-1">
+                        <Sparkles className="w-3 h-3 text-amber-600" />
+                        <span>{t('detailCourseInfo')}</span>
+                      </div>
+                      <p className="line-clamp-1 text-[11px] text-stone-600">
+                        💡 {diary.localInsights.recommendedForSolo}
+                      </p>
                     </div>
-                    <p className="line-clamp-1 text-[11px] text-stone-600">
-                      💡 {diary.localInsights.recommendedForSolo}
-                    </p>
-                  </div>
+                  )}
 
                   {/* Tags */}
                   {diary.moodTags.length > 0 && (

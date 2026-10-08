@@ -609,12 +609,16 @@ export default function App() {
 
     let dist = 0;
     for (let i = 0; i < relevantDiaries.length - 1; i++) {
-      dist += calculateDistanceKm(
-        relevantDiaries[i].location.lat,
-        relevantDiaries[i].location.lng,
-        relevantDiaries[i + 1].location.lat,
-        relevantDiaries[i + 1].location.lng
-      );
+      const fromLoc = relevantDiaries[i]?.location;
+      const toLoc = relevantDiaries[i + 1]?.location;
+      if (fromLoc && toLoc && typeof fromLoc.lat === 'number' && typeof toLoc.lat === 'number') {
+        dist += calculateDistanceKm(
+          fromLoc.lat,
+          fromLoc.lng,
+          toLoc.lat,
+          toLoc.lng
+        );
+      }
     }
     return Math.round(dist * 10) / 10;
   }, [diaries]);
@@ -675,7 +679,7 @@ export default function App() {
                 </div>
                 <div className="hidden sm:block text-right text-[11px] text-stone-400 border-l border-stone-700 pl-3">
                   <div>총 여정: <strong className="text-white">{diaries.length}개</strong></div>
-                  <div>방문지: <strong className="text-amber-300">{new Set(diaries.map(d => d.location.region.split(' ')[0])).size}곳</strong></div>
+                  <div>방문지: <strong className="text-amber-300">{new Set(diaries.map(d => d.location?.region ? d.location.region.split(' ')[0] : '').filter(Boolean)).size}곳</strong></div>
                 </div>
               </div>
             </div>

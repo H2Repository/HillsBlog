@@ -41,31 +41,62 @@ export function subscribeDiaries(
 
   const unsubscribe = onSnapshot(
     diariesCol,
-    async (snapshot) => {
+    (snapshot) => {
       const list: DiaryEntry[] = [];
       if (!snapshot.empty) {
-        const promises = snapshot.docs.map(async (docSnap) => {
-          const data = docSnap.data() as DiaryEntry;
-          if (data && data.id && data.title) {
-            if (data.hasSubcollectionPhotos) {
-              const fullPhotos = await fetchDiaryFullPhotos(data.id);
-              if (fullPhotos.length > 0) {
-                data.photos = fullPhotos;
-              }
+        snapshot.forEach((docSnap) => {
+          try {
+            const raw = docSnap.data();
+            if (raw && (raw.id || docSnap.id)) {
+              const data: DiaryEntry = {
+                id: raw.id || docSnap.id,
+                title: raw.title || '제목 없음',
+                content: typeof raw.content === 'string' ? raw.content : '',
+                date: raw.date || '',
+                time: raw.time || '',
+                location: raw.location || { lat: 21.0285, lng: 105.8542, address: '', region: '위치 미지정' },
+                photos: Array.isArray(raw.photos) ? raw.photos : [],
+                weather: raw.weather || 'sunny',
+                moodTags: Array.isArray(raw.moodTags) ? raw.moodTags : [],
+                localInsights: raw.localInsights || { recommendedForSolo: '' },
+                rating: typeof raw.rating === 'number' ? raw.rating : 5,
+                views: typeof raw.views === 'number' ? raw.views : 0,
+                hasSubcollectionPhotos: !!raw.hasSubcollectionPhotos,
+                totalPhotosCount: raw.totalPhotosCount,
+                createdAt: raw.createdAt || Date.now(),
+                updatedAt: raw.updatedAt || Date.now(),
+              };
+              list.push(data);
             }
-            list.push(data);
+          } catch (err) {
+            console.error('Error parsing diary document:', docSnap.id, err);
           }
         });
-        await Promise.all(promises);
       }
 
-      // Merge with any offline changes that are pending sync and sort newest first
-      const finalList = sortDiariesDescending(mergeRemoteWithPendingQueue(list));
+      // Immediately display all diaries to the UI without blocking
+      const immediateList = sortDiariesDescending(mergeRemoteWithPendingQueue(list));
+      saveToLocalCache(immediateList);
+      onUpdate(immediateList, true);
 
-      // Update local storage cache for offline/instant resume on refresh
-      saveToLocalCache(finalList);
-
-      onUpdate(finalList, true);
+      // Asynchronously enrich any diaries that have photos stored in subcollections
+      const largeDiaries = list.filter((d) => d.hasSubcollectionPhotos);
+      if (largeDiaries.length > 0) {
+        Promise.all(
+          largeDiaries.map(async (entry) => {
+            const subPhotos = await fetchDiaryFullPhotos(entry.id);
+            if (subPhotos.length > 0) {
+              entry.photos = subPhotos;
+            }
+          })
+        ).then(() => {
+          const enrichedList = sortDiariesDescending(mergeRemoteWithPendingQueue(list));
+          saveToLocalCache(enrichedList);
+          onUpdate(enrichedList, true);
+        }).catch((err) => {
+          console.warn('Background subcollection photos load note:', err);
+        });
+      }
     },
     (error) => {
       console.error('Firestore snapshot listener error:', error);
