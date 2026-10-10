@@ -32,8 +32,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const INITIAL_VISIBLE_COUNT = 12;
-const PAGE_SIZE = 12;
+const INITIAL_VISIBLE_COUNT = 4;
+const PAGE_SIZE = 4;
 
 interface BlogFeedViewProps {
   diaries: DiaryEntry[];
