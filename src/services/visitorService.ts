@@ -144,16 +144,32 @@ async function fetchVisitorGeoLocation(): Promise<{
 
 /**
  * Records a visitor's location and viewed content into Firestore.
- * Automatically skips if the current session is an admin session (관리자 모드에서는 기록하지 않음).
+ * Automatically skips if:
+ * 1. Current user is admin
+ * 2. No specific diary was clicked (only logs when a diary is clicked/read)
+ * 3. User agent is a known bot/crawler
  */
 export async function recordVisitorLocation(diaryId?: string, diaryTitle?: string): Promise<void> {
-  // 관리자 모드인 경우 방문자 위치 기록을 수행하지 않음
+  // 1. 일기 내용을 클릭한 경우에만 기록 (홈 피드 단순 진입이나 ID 없는 호출 차단)
+  if (!diaryId) {
+    return;
+  }
+
+  // 2. 관리자 모드인 경우 기록 제외
   if (checkAdminPermission()) {
     return;
   }
 
+  // 3. 웹 크롤러 / 점검 봇 제외
+  if (typeof navigator !== 'undefined') {
+    const ua = navigator.userAgent || '';
+    if (/bot|googlebot|crawler|spider|robot|crawling|headless/i.test(ua)) {
+      return;
+    }
+  }
+
   // Prevent spamming in same browser session within 10 minutes for the same diary
-  const sessionKey = `visitor_loc_logged_${diaryId || 'home'}`;
+  const sessionKey = `visitor_loc_logged_${diaryId}`;
   try {
     const lastLogged = sessionStorage.getItem(sessionKey);
     if (lastLogged) {
@@ -177,7 +193,7 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
       city: geo.city,
       country: geo.country,
       region: geo.region,
-      diaryId: diaryId || 'home',
+      diaryId: diaryId,
       diaryTitle: diaryTitle || '블로그 홈 피드',
       device: detectDevice(),
       ipMasked: geo.ipMasked,

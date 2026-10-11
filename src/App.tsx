@@ -61,13 +61,6 @@ export default function App() {
   const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>([]);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
 
-  // Initial visitor entry logging (if not admin)
-  useEffect(() => {
-    if (!isAdmin) {
-      recordVisitorLocation().catch(console.warn);
-    }
-  }, [isAdmin]);
-
   // Subscribe to real-time visitor logs when admin is logged in
   useEffect(() => {
     if (isAdmin) {
