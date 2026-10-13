@@ -634,6 +634,7 @@ export default function App() {
         cloudSyncStatus={cloudSyncStatus}
         pendingSyncCount={pendingSyncCount}
         onTriggerSync={handleTriggerSync}
+        onOpenFlutterCode={() => setIsFlutterCodeOpen(true)}
       />
 
       {/* Main Content Area */}

@@ -22,6 +22,7 @@ import { getCurrentGpsPosition, reverseGeocode } from '../utils/geo';
 import { useLanguage } from '../context/LanguageContext';
 import { LanguageSelector } from './LanguageSelector';
 import { useAuth } from '../context/AuthContext';
+import { FlutterIcon } from './FlutterIcon';
 interface NavbarProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
@@ -31,6 +32,7 @@ interface NavbarProps {
   totalViewsCount?: number;
   visitorLogsCount?: number;
   onOpenVisitorModal?: () => void;
+  onOpenFlutterCode: () => void;
   onQuickLocate?: (lat: number, lng: number, address: string, region: string) => void;
   cloudSyncStatus?: 'syncing' | 'connected' | 'offline';
   pendingSyncCount?: number;
@@ -46,6 +48,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   totalViewsCount,
   visitorLogsCount = 0,
   onOpenVisitorModal,
+  onOpenFlutterCode,
   onQuickLocate,
   cloudSyncStatus = 'connected',
   pendingSyncCount = 0,
@@ -221,6 +224,23 @@ export const Navbar: React.FC<NavbarProps> = ({
               title={t('exportBackup')}
             >
               <Download className="w-4 h-4" />
+            </button>
+
+            {/* Flutter App Icon */}
+            <button
+              id="btn-flutter-app"
+              type="button"
+              onClick={() => {
+                if (isAdmin) {
+                  onOpenFlutterCode();
+                } else {
+                  openLoginModal('Flutter 앱 정보는 관리자만 확인 가능합니다.');
+                }
+              }}
+              className="p-2 rounded-lg text-stone-400 hover:text-sky-300 hover:bg-stone-800 transition"
+              title="Flutter 모바일 앱 보기"
+            >
+              <FlutterIcon className="w-4 h-4" />
             </button>
 
             <button
