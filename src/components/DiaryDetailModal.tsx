@@ -38,6 +38,10 @@ interface DiaryDetailModalProps {
   onDelete: (diary: DiaryEntry) => void;
   onViewOnMap: (diary: DiaryEntry) => void;
   onOpenPhotoLightbox: (photos: DiaryEntry['photos'], index: number) => void;
+  onNextDiary?: () => void;
+  onPrevDiary?: () => void;
+  hasNext?: boolean;
+  hasPrev?: boolean;
 }
 
 export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
@@ -48,6 +52,10 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
   onDelete,
   onViewOnMap,
   onOpenPhotoLightbox,
+  onNextDiary,
+  onPrevDiary,
+  hasNext = false,
+  hasPrev = false,
 }) => {
   const { t, language } = useLanguage();
   const { isAdmin } = useAuth();
@@ -511,9 +519,20 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
               </div>
 
               <div className="flex-1 min-w-0 space-y-1.5 w-full">
-                <div className="flex items-center gap-1.5 text-xs text-amber-700 font-bold">
-                  <MapPin className="w-4 h-4" />
-                  <span>{t('recordedLocation')}</span>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-xs text-amber-700 font-bold">
+                    <MapPin className="w-4 h-4" />
+                    <span>{t('recordedLocation')}</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                    (displayDiary.location.includeInDistance ?? displayDiary.includeInDistance ?? true) !== false
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-stone-200 text-stone-700 border border-stone-300'
+                  }`}>
+                    {(displayDiary.location.includeInDistance ?? displayDiary.includeInDistance ?? true) !== false
+                      ? '🚴 누적 주행거리 포함'
+                      : '🚫 누적 주행거리 제외'}
+                  </span>
                 </div>
                 <p className="text-sm font-bold text-stone-900 truncate">
                   {displayDiary.location.landmark || displayDiary.location.region}

@@ -239,40 +239,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoginModalOpen(true);
   };
 
-  // Google Sign-In
+  // Google Sign-In (Disabled as requested)
   const loginWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
-    try {
-      setIsLoading(true);
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      const result = await signInWithPopup(auth, provider);
-      const fbUser = result.user;
-      const userEmail = fbUser.email || '';
-      
-      const isAdmin = userEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase() || true;
-
-      const appUser: AppUser = {
-        uid: fbUser.uid,
-        email: userEmail,
-        displayName: fbUser.displayName || userEmail.split('@')[0] || '관리자',
-        photoURL: fbUser.photoURL || undefined,
-        isAdmin,
-        provider: 'google',
-      };
-
-      setCurrentUser(appUser);
-      localStorage.setItem(ADMIN_SESSION_STORAGE_KEY, JSON.stringify(appUser));
-      lastActivityRef.current = Date.now();
-      localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, Date.now().toString());
-      closeLoginModal();
-      return { success: true };
-    } catch (error: unknown) {
-      console.error('Google Sign-In Error:', error);
-      const msg = error instanceof Error ? error.message : 'Google 로그인에 실패했습니다.';
-      return { success: false, error: msg };
-    } finally {
-      setIsLoading(false);
-    }
+    return {
+      success: false,
+      error: '구글 로그인은 비활성화되어 있습니다. 관리자 비밀번호를 사용해 로그인해주세요.',
+    };
   };
 
   // Admin Passcode / Quick Admin Login (Robust for iframe sandbox where popups might be blocked)

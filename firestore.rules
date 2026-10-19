@@ -29,9 +29,13 @@ service cloud.firestore {
       allow create, update: if isValidId(diaryId) && isValidDiary(request.resource.data) && request.resource.data.id == diaryId;
       allow delete: if isValidId(diaryId);
 
-      // Attached photos subcollection (allows up to 2MB+ attached photos)
+      // Attached photos subcollection (allows up to 3MB+ attached photos with chunking)
       match /photos/{photoId} {
         allow read, write, delete: if isValidId(diaryId);
+
+        match /chunks/{chunkId} {
+          allow read, write, delete: if isValidId(diaryId);
+        }
       }
     }
 

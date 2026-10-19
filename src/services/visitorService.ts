@@ -11,7 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { VisitorLog } from '../types';
-import { checkAdminPermission } from './diaryFirestore';
+import { checkAdminPermission, executeOnline } from './diaryFirestore';
 
 const VISITOR_LOGS_COLLECTION = 'visitor_logs';
 
@@ -199,11 +199,32 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
       ipMasked: geo.ipMasked,
     };
 
-    const docRef = doc(db, VISITOR_LOGS_COLLECTION, logId);
-    await setDoc(docRef, logEntry);
+    await executeOnline(async () => {
+      const docRef = doc(db, VISITOR_LOGS_COLLECTION, logId);
+      await setDoc(docRef, logEntry);
+    });
   } catch (err) {
     console.warn('Could not record visitor location:', err);
   }
+}
+
+/**
+ * Fetches visitor logs on-demand online and switches back to offline
+ */
+export async function fetchVisitorLogsOnline(): Promise<VisitorLog[]> {
+  return await executeOnline(async () => {
+    const colRef = collection(db, VISITOR_LOGS_COLLECTION);
+    const q = query(colRef, orderBy('timestamp', 'desc'), limit(150));
+    const snap = await getDocs(q);
+    const list: VisitorLog[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as VisitorLog;
+      if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+        list.push(data);
+      }
+    });
+    return list;
+  });
 }
 
 /**
@@ -213,28 +234,12 @@ export function subscribeVisitorLogs(
   onUpdate: (logs: VisitorLog[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const colRef = collection(db, VISITOR_LOGS_COLLECTION);
-  const q = query(colRef, orderBy('timestamp', 'desc'), limit(150));
+  // Initial on-demand fetch
+  fetchVisitorLogsOnline().then(onUpdate).catch((err) => {
+    if (onError) onError(err);
+  });
 
-  const unsubscribe = onSnapshot(
-    q,
-    (snapshot) => {
-      const list: VisitorLog[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as VisitorLog;
-        if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
-          list.push(data);
-        }
-      });
-      onUpdate(list);
-    },
-    (err) => {
-      console.warn('Visitor logs subscription error:', err);
-      if (onError) onError(err);
-    }
-  );
-
-  return unsubscribe;
+  return () => {};
 }
 
 /**
@@ -245,7 +250,9 @@ export async function clearAllVisitorLogs(): Promise<void> {
     throw new Error('방문자 위치 기록 초기화는 관리자만 가능합니다.');
   }
 
-  const snap = await getDocs(collection(db, VISITOR_LOGS_COLLECTION));
-  const deletions = snap.docs.map((d) => deleteDoc(doc(db, VISITOR_LOGS_COLLECTION, d.id)));
-  await Promise.all(deletions);
+  return await executeOnline(async () => {
+    const snap = await getDocs(collection(db, VISITOR_LOGS_COLLECTION));
+    const deletions = snap.docs.map((d) => deleteDoc(doc(db, VISITOR_LOGS_COLLECTION, d.id)));
+    await Promise.all(deletions);
+  });
 }

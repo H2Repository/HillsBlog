@@ -140,13 +140,18 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     const startIndex = bikeShopIndex !== -1 ? bikeShopIndex : 0;
     const relevantDiaries = sortedDiaries.slice(startIndex);
 
+    // Filter only diaries where includeInDistance is not false (default: true)
+    const distanceDiaries = relevantDiaries.filter(
+      (d) => (d.location?.includeInDistance ?? d.includeInDistance ?? true) !== false
+    );
+
     let dist = 0;
-    for (let i = 0; i < relevantDiaries.length - 1; i++) {
+    for (let i = 0; i < distanceDiaries.length - 1; i++) {
       dist += calculateDistanceKm(
-        relevantDiaries[i].location.lat,
-        relevantDiaries[i].location.lng,
-        relevantDiaries[i + 1].location.lat,
-        relevantDiaries[i + 1].location.lng
+        distanceDiaries[i].location.lat,
+        distanceDiaries[i].location.lng,
+        distanceDiaries[i + 1].location.lat,
+        distanceDiaries[i + 1].location.lng
       );
     }
     setTotalDistance(Math.round(dist * 10) / 10);
@@ -208,12 +213,18 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
       const { lat, lng } = diary.location;
       latLngs.push([lat, lng]);
 
+      const isIncluded = (diary.location?.includeInDistance ?? diary.includeInDistance ?? true) !== false;
       const coverPhoto = diary.photos.find(p => p.isCover) || diary.photos[0];
+      const pinColor = isIncluded ? 'bg-amber-600' : 'bg-stone-600';
+      const arrowColor = isIncluded ? 'bg-amber-600' : 'bg-stone-600';
+      const badgeBorder = isIncluded ? 'border-white' : 'border-stone-300';
+      const badgeBg = isIncluded ? 'bg-stone-900' : 'bg-stone-700';
+
       const photoHtml = coverPhoto
-        ? `<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-lg bg-stone-200">
+        ? `<div class="w-10 h-10 rounded-full overflow-hidden border-2 ${isIncluded ? 'border-amber-400' : 'border-stone-400 opacity-90'} shadow-lg bg-stone-200">
              <img src="${coverPhoto.url}" alt="" class="w-full h-full object-cover" />
            </div>`
-        : `<div class="w-10 h-10 rounded-full bg-amber-600 border-2 border-white shadow-lg flex items-center justify-center text-white font-bold text-xs">
+        : `<div class="w-10 h-10 rounded-full ${pinColor} border-2 border-white shadow-lg flex items-center justify-center text-white font-bold text-xs">
              ${index + 1}
            </div>`;
 
@@ -222,10 +233,10 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
         html: `
           <div class="relative flex flex-col items-center group cursor-pointer transition-transform duration-200 hover:scale-115">
             ${photoHtml}
-            <div class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-stone-900 border border-white text-white text-[10px] font-bold flex items-center justify-center shadow">
-              ${index + 1}
+            <div class="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full ${badgeBg} border ${badgeBorder} text-white text-[10px] font-bold flex items-center justify-center shadow">
+              ${!isIncluded ? '<span class="mr-0.5 text-[9px]">🚫</span>' : ''}${index + 1}
             </div>
-            <div class="w-2.5 h-2.5 bg-amber-600 rotate-45 -mt-1 shadow-sm"></div>
+            <div class="w-2.5 h-2.5 ${arrowColor} rotate-45 -mt-1 shadow-sm"></div>
           </div>
         `,
         iconSize: [40, 48],
@@ -239,7 +250,7 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
       const popupContent = `
         <div style="font-family: inherit; min-width: 200px; max-width: 260px;">
           ${coverPhoto ? `<img src="${coverPhoto.url}" style="width: 100%; height: 110px; object-fit: cover; border-radius: 8px; margin-bottom: 8px;" />` : ''}
-          <div style="font-size: 11px; color: #d97706; font-weight: 600; margin-bottom: 2px;">
+          <div style="font-size: 11px; color: ${isIncluded ? '#d97706' : '#78716c'}; font-weight: 600; margin-bottom: 2px;">
             ${index + 1} • ${diary.date}
           </div>
           <div style="font-size: 14px; font-weight: 700; color: #1c1917; margin-bottom: 4px; line-height: 1.3;">
@@ -248,12 +259,19 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
           <div style="font-size: 12px; color: #78716c; margin-bottom: 4px;">
             📍 ${diary.location.region}
           </div>
+          ${!isIncluded ? `
+          <div style="margin-bottom: 6px;">
+            <span style="display: inline-block; font-size: 10px; color: #57534e; background: #f5f5f4; border: 1px solid #d6d3d1; padding: 2px 8px; border-radius: 9999px; font-weight: 600;">
+              🚫 누적 주행거리 제외 위치
+            </span>
+          </div>
+          ` : ''}
           ${isAdmin ? `
           <div style="font-size: 11px; color: #b45309; font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 4px;">
             👁️ ${(diary.views || 0).toLocaleString()} ${t('diaryViewLabel')}
           </div>
           ` : ''}
-          <button id="popup-btn-${diary.id}" style="width: 100%; padding: 6px 12px; background: #d97706; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">
+          <button id="popup-btn-${diary.id}" style="width: 100%; padding: 6px 12px; background: ${isIncluded ? '#d97706' : '#57534e'}; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">
             ${t('mapRead')}
           </button>
         </div>
@@ -282,9 +300,14 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
       markersRef.current[diary.id] = marker;
     });
 
-    // Draw route trail polyline
-    if (latLngs.length > 1) {
-      const polyline = L.polyline(latLngs, {
+    // Draw route trail polyline for cumulative riding route (only includeInDistance !== false)
+    const ridingDiaries = sortedDiaries.filter(
+      (d) => (d.location?.includeInDistance ?? d.includeInDistance ?? true) !== false
+    );
+    const ridingLatLngs: [number, number][] = ridingDiaries.map((d) => [d.location.lat, d.location.lng]);
+
+    if (ridingLatLngs.length > 1) {
+      const polyline = L.polyline(ridingLatLngs, {
         color: '#d97706',
         weight: 3.5,
         opacity: 0.85,

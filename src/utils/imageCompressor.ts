@@ -1,12 +1,13 @@
 import { DiaryEntry, TravelPhoto } from '../types';
 
-export const MAX_PHOTO_DIMENSION = 1600; // High resolution up to 1600px
-export const MAX_DIARY_PAYLOAD_BYTES = 5 * 1024 * 1024; // 5MB max diary creation payload (including photos)
-export const MAX_HD_PHOTO_BYTES = 2 * 1024 * 1024; // Up to 2MB per photo
+export const MAX_PHOTO_DIMENSION = 2048; // Crisp 2K resolution up to 2048px
+export const MAX_PHOTO_BYTES = 3 * 1024 * 1024; // 3MB limit per photo (3메가 제한)
+export const MAX_HD_PHOTO_BYTES = MAX_PHOTO_BYTES; // Backward compatibility alias
+export const MAX_DIARY_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10MB max diary creation payload (including photos)
 export const DEFAULT_JPEG_QUALITY = 0.88;
 
 /**
- * Calculates bounding box dimensions so that neither width nor height exceeds maxDimension (HD 1280px),
+ * Calculates bounding box dimensions so that neither width nor height exceeds maxDimension (up to 2048px),
  * while strictly preserving original aspect ratio.
  */
 export function calculateTargetDimensions(
@@ -18,7 +19,7 @@ export function calculateTargetDimensions(
     return { width: maxDimension, height: maxDimension, wasScaled: false };
   }
 
-  // If already within HD 1280px bounds on both dimensions, no downscaling needed
+  // If already within bounds on both dimensions, no downscaling needed
   if (origWidth <= maxDimension && origHeight <= maxDimension) {
     return { width: origWidth, height: origHeight, wasScaled: false };
   }
@@ -39,7 +40,7 @@ export const calculateFullHdDimensions = calculateTargetDimensions;
 /**
  * Loads an image from a File, blob URL, or data URL string into an HTMLImageElement
  */
-function loadImage(source: File | string): Promise<HTMLImageElement> {
+export function loadImage(source: File | string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -71,10 +72,10 @@ export interface CompressResult {
 
 /**
  * Compresses an image file or base64 data URL:
- * 1. Strictly limits photo resolution to HD (max dimension <= 1280px).
+ * 1. Supports crisp high resolution (up to 2048px).
  * 2. Downscales if larger while preserving aspect ratio.
- * 3. Applies high-efficiency HD JPEG compression (quality = 0.83).
- * 4. Ensures output size per photo is lean (typically 100KB~350KB), enabling multiple photos within 2MB total diary limit.
+ * 3. Enforces strict 3MB limit (3메가 제한): guarantees the resulting photo does not exceed 3MB.
+ * 4. Iteratively optimizes quality if necessary to fit comfortably within the 3MB ceiling.
  */
 export async function compressPhotoToHd(
   source: File | string,
@@ -84,7 +85,7 @@ export async function compressPhotoToHd(
   const origW = img.naturalWidth || img.width;
   const origH = img.naturalHeight || img.height;
 
-  const { width: targetW, height: targetH, wasScaled } = calculateTargetDimensions(origW, origH, MAX_PHOTO_DIMENSION);
+  let { width: targetW, height: targetH, wasScaled } = calculateTargetDimensions(origW, origH, MAX_PHOTO_DIMENSION);
 
   const canvas = document.createElement('canvas');
   canvas.width = targetW;
@@ -95,7 +96,7 @@ export async function compressPhotoToHd(
     throw new Error('Canvas 2D context is not available');
   }
 
-  // Smooth HD rendering
+  // Smooth high-definition rendering
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, targetW, targetH);
@@ -104,11 +105,25 @@ export async function compressPhotoToHd(
   let dataUrl = canvas.toDataURL('image/jpeg', currentQuality);
   let sizeBytes = Math.round((dataUrl.length * 3) / 4);
 
-  // If output size exceeds HD target (450KB), adjust quality slightly
-  if (sizeBytes > MAX_HD_PHOTO_BYTES) {
-    currentQuality = 0.76;
+  // If output size exceeds 3MB, iteratively reduce quality or scale down to guarantee <= 3MB
+  let attempts = 0;
+  while (sizeBytes > MAX_PHOTO_BYTES && attempts < 6) {
+    attempts++;
+    currentQuality = Math.max(0.45, currentQuality - 0.1);
     dataUrl = canvas.toDataURL('image/jpeg', currentQuality);
     sizeBytes = Math.round((dataUrl.length * 3) / 4);
+
+    if (sizeBytes > MAX_PHOTO_BYTES && attempts >= 2) {
+      targetW = Math.round(targetW * 0.85);
+      targetH = Math.round(targetH * 0.85);
+      canvas.width = targetW;
+      canvas.height = targetH;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+      dataUrl = canvas.toDataURL('image/jpeg', currentQuality);
+      sizeBytes = Math.round((dataUrl.length * 3) / 4);
+      wasScaled = true;
+    }
   }
 
   return {
@@ -123,10 +138,45 @@ export async function compressPhotoToHd(
 }
 
 // Backward compatibility aliases
+export const compressPhotoTo3MB = compressPhotoToHd;
 export const compressPhotoTo2MB = compressPhotoToHd;
 export const compressPhotoTo720 = compressPhotoToHd;
 export const compressPhotoTo1080 = compressPhotoToHd;
 export const compressPhotoToFullHd = compressPhotoToHd;
+
+/**
+ * Creates a lightweight thumbnail (max 480px, ~40KB-70KB) for instant feed cover display.
+ * Prevents bloating the main diary Firestore document when attached photos are up to 3MB.
+ */
+export async function createThumbnail(
+  source: File | string,
+  maxDimension: number = 480,
+  quality: number = 0.75
+): Promise<string> {
+  try {
+    const img = await loadImage(source);
+    const origW = img.naturalWidth || img.width;
+    const origH = img.naturalHeight || img.height;
+
+    const { width: targetW, height: targetH } = calculateTargetDimensions(origW, origH, maxDimension);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return typeof source === 'string' ? source : '';
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'medium';
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    return canvas.toDataURL('image/jpeg', quality);
+  } catch (err) {
+    console.warn('createThumbnail failed, fallback to original:', err);
+    return typeof source === 'string' ? source : '';
+  }
+}
 
 /**
  * Helper to calculate byte size of a diary entry
@@ -140,7 +190,7 @@ export function getDiaryPayloadSizeBytes(entry: Partial<DiaryEntry>): number {
 }
 
 /**
- * Formats bytes to human-readable string (e.g. "420 KB", "1.8 MB")
+ * Formats bytes to human-readable string (e.g. "420 KB", "2.8 MB")
  */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -149,7 +199,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Optimizes a single diary entry's photos by resizing any exceeding HD (1280px).
+ * Optimizes a single diary entry's photos only if exceeding the 3MB limit.
  */
 export async function optimizeDiaryPhotos(diary: DiaryEntry): Promise<{
   updatedDiary: DiaryEntry;
@@ -166,9 +216,11 @@ export async function optimizeDiaryPhotos(diary: DiaryEntry): Promise<{
 
   for (const photo of diary.photos) {
     if (photo.url && photo.url.startsWith('data:image/')) {
-      try {
-        const result = await compressPhotoToHd(photo.url);
-        if (result.wasScaled || result.dataUrl.length < photo.url.length * 0.95) {
+      const approxBytes = Math.round((photo.url.length * 3) / 4);
+      // Only compress if photo exceeds the 3MB limit
+      if (approxBytes > MAX_PHOTO_BYTES) {
+        try {
+          const result = await compressPhotoToHd(photo.url);
           newPhotos.push({
             ...photo,
             url: result.dataUrl,
@@ -176,9 +228,9 @@ export async function optimizeDiaryPhotos(diary: DiaryEntry): Promise<{
           modified = true;
           photosOptimized++;
           continue;
+        } catch (err) {
+          console.warn(`Could not optimize photo ${photo.id}:`, err);
         }
-      } catch (err) {
-        console.warn(`Could not optimize photo ${photo.id}:`, err);
       }
     }
     newPhotos.push(photo);

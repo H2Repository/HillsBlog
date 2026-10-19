@@ -4,6 +4,7 @@ import { getCurrentGpsPosition, reverseGeocode, POPULAR_SOLO_DESTINATIONS } from
 import { 
   compressPhotoToHd, 
   MAX_DIARY_PAYLOAD_BYTES, 
+  MAX_PHOTO_BYTES,
   getDiaryPayloadSizeBytes, 
   formatBytes 
 } from '../utils/imageCompressor';
@@ -99,6 +100,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     region: '제주 애월 한담해변',
     landmark: '한담해안산책로',
     isRealtimeGps: false,
+    includeInDistance: true,
   });
   const [isGpsLoading, setIsGpsLoading] = useState(false);
   const [gpsMessage, setGpsMessage] = useState<string | null>(null);
@@ -135,6 +137,15 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     setRating(5);
     setMoodTags(['#자전거여행', '#라이딩']);
     setTagInput('');
+    setLocation({
+      lat: 33.4619,
+      lng: 126.3113,
+      address: '제주특별자치도 제주시 애월읍 애월로 11',
+      region: '제주 애월 한담해변',
+      landmark: '한담해안산책로',
+      isRealtimeGps: false,
+      includeInDistance: true,
+    });
     setPhotos([]);
     setIsCompressingPhotos(false);
     setCompressionNote(null);
@@ -165,7 +176,10 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
       setWeather(initialEntry.weather || 'sunny');
       setRating(initialEntry.rating || 5);
       setMoodTags(initialEntry.moodTags || []);
-      setLocation(initialEntry.location);
+      setLocation({
+        ...initialEntry.location,
+        includeInDistance: initialEntry.location?.includeInDistance !== false && initialEntry.includeInDistance !== false,
+      });
       setPhotos(initialEntry.photos || []);
       setRecommendedForSolo(initialEntry.localInsights.recommendedForSolo || '');
       setLocalFood(initialEntry.localInsights.localFood || '');
@@ -274,7 +288,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     try {
       const pos = await getCurrentGpsPosition();
       const info = await reverseGeocode(pos.lat, pos.lng);
-      setLocation({
+      setLocation(prev => ({
         lat: pos.lat,
         lng: pos.lng,
         accuracy: pos.accuracy,
@@ -282,7 +296,8 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
         region: info.region,
         landmark: info.landmark,
         isRealtimeGps: true,
-      });
+        includeInDistance: prev.includeInDistance ?? true,
+      }));
       setGpsMessage(`실시간 위치 수신 완료 (오차 ±${pos.accuracy}m)`);
 
       if (miniMapRef.current && miniMarkerRef.current) {
@@ -298,17 +313,18 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
   };
 
   const handleSelectPresetDestination = (dest: GeoLocation) => {
-    setLocation({
+    setLocation(prev => ({
       ...dest,
       isRealtimeGps: false,
-    });
+      includeInDistance: prev.includeInDistance ?? true,
+    }));
     if (miniMapRef.current && miniMarkerRef.current) {
       miniMapRef.current.setView([dest.lat, dest.lng], 14);
       miniMarkerRef.current.setLatLng([dest.lat, dest.lng]);
     }
   };
 
-  // Handle Photo Upload: Limits photo resolution to HD (1280px) and optimizes size
+  // Handle Photo Upload: Limits photo size to 3MB (최대 3메가 제한) and optimizes resolution up to 2K
   const handlePhotoFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setIsCompressingPhotos(true);
@@ -317,7 +333,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     for (let i = 0; i < fileArray.length; i++) {
       const file = fileArray[i];
       try {
-        setCompressionNote(`사진 HD(1280px 이하) 최적화 중 (${i + 1}/${fileArray.length})...`);
+        setCompressionNote(`사진 최적화 중 (최대 3MB 지원, ${i + 1}/${fileArray.length})...`);
         const result = await compressPhotoToHd(file);
         setPhotos((prev) => {
           const newPhoto: TravelPhoto = {
@@ -332,7 +348,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
 
         const sizeKb = Math.round(result.sizeBytes / 1024);
         setCompressionNote(
-          `HD 이하 최적화 완료 (${result.width}×${result.height}px, ${sizeKb}KB)`
+          `사진 최적화 완료 (${result.width}×${result.height}px, ${sizeKb}KB / 최대 3MB 이내)`
         );
       } catch (err) {
         console.error('Failed to compress photo:', err);
@@ -397,7 +413,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     setMoodTags(prev => prev.filter(t => t !== tagToRemove));
   };
 
-  // Dynamic calculation of total diary creation payload (including attached photos, max 2MB)
+  // Dynamic calculation of total diary creation payload (supports up to 3MB per photo, 10MB total diary)
   const currentPayloadBytes = useMemo(() => {
     return getDiaryPayloadSizeBytes({
       title,
@@ -432,7 +448,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     }
 
     if (isOverLimit) {
-      alert(`일기 작성 전체 용량(${formatBytes(currentPayloadBytes)})이 최대 허용 용량인 5MB를 초과했습니다. 첨부된 사진 수를 줄이거나 조절해주세요.`);
+      alert(`일기 작성 전체 용량(${formatBytes(currentPayloadBytes)})이 최대 허용 용량인 10MB를 초과했습니다. 첨부된 사진 수를 줄이거나 조절해주세요.`);
       return;
     }
 
@@ -442,7 +458,10 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
       content: content.trim(),
       date,
       time,
-      location,
+      location: {
+        ...location,
+        includeInDistance: location.includeInDistance !== false,
+      },
       photos,
       weather,
       moodTags,
@@ -454,6 +473,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
       },
       rating,
       views: initialEntry?.views ?? 0,
+      includeInDistance: location.includeInDistance !== false,
       createdAt: initialEntry ? initialEntry.createdAt : Date.now(),
       updatedAt: Date.now(),
     };
@@ -627,6 +647,54 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
                     ))}
                   </div>
                 </div>
+
+                {/* Include / Exclude in Cumulative Riding Distance Setting */}
+                <div className="pt-2.5 border-t border-amber-200/80">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/90 p-2.5 rounded-xl border border-amber-200/90 shadow-2xs">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-stone-900">🚴 누적 주행거리 계산</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          location.includeInDistance !== false
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-stone-200 text-stone-700 border border-stone-300'
+                        }`}>
+                          {location.includeInDistance !== false ? '✓ 포함' : '✕ 제외'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-stone-500 mt-0.5">
+                        {location.includeInDistance !== false
+                          ? '이 위치까지의 자전거 이동 거리가 총 누적 주행거리에 합산됩니다.'
+                          : '경유지나 대중교통 이동, 단순 체크인으로 누적 주행거리 합산에서 제외됩니다.'}
+                      </p>
+                    </div>
+
+                    <div className="inline-flex rounded-lg border border-stone-300 bg-stone-100 p-0.5 shrink-0 self-start sm:self-center">
+                      <button
+                        type="button"
+                        onClick={() => setLocation((prev) => ({ ...prev, includeInDistance: true }))}
+                        className={`px-3 py-1.5 text-xs rounded-md font-bold transition cursor-pointer ${
+                          location.includeInDistance !== false
+                            ? 'bg-amber-600 text-white shadow-sm'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
+                      >
+                        포함
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLocation((prev) => ({ ...prev, includeInDistance: false }))}
+                        className={`px-3 py-1.5 text-xs rounded-md font-bold transition cursor-pointer ${
+                          location.includeInDistance === false
+                            ? 'bg-stone-800 text-white shadow-sm'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
+                      >
+                        제외
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -642,7 +710,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
                   </h3>
                 </div>
                 <p className="text-[11px] text-stone-500 mt-0.5">
-                  사진 용량은 HD(1280×720) 이하로 제한되며, 일기는 사진 첨부 포함 최대 2MB까지 작성할 수 있습니다.
+                  사진 용량은 장당 최대 3MB까지 지원되며, 일기는 사진 첨부 포함 최대 10MB까지 작성할 수 있습니다.
                 </p>
               </div>
 
@@ -1031,20 +1099,23 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
                 <span>내용 초기화</span>
               </button>
 
-              {/* 2MB Capacity Meter */}
+              {/* 10MB Capacity Meter & 3MB Photo limit */}
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-stone-100 border border-stone-200 text-xs">
                 <span className="text-stone-500 text-[11px]">작성 용량:</span>
                 <span className={`font-mono text-xs font-bold ${isOverLimit ? 'text-rose-600' : 'text-stone-700'}`}>
-                  {formatBytes(currentPayloadBytes)} / 2 MB
+                  {formatBytes(currentPayloadBytes)} / 10 MB
                 </span>
                 <div className="w-16 h-1.5 rounded-full bg-stone-200 overflow-hidden hidden sm:block">
                   <div
                     className={`h-full transition-all duration-300 ${
-                      isOverLimit ? 'bg-rose-500' : currentPayloadBytes > 1500000 ? 'bg-amber-500' : 'bg-emerald-500'
+                      isOverLimit ? 'bg-rose-500' : currentPayloadBytes > 7000000 ? 'bg-amber-500' : 'bg-emerald-500'
                     }`}
                     style={{ width: `${Math.min(100, (currentPayloadBytes / MAX_DIARY_PAYLOAD_BYTES) * 100)}%` }}
                   />
                 </div>
+                <span className="text-[10px] text-amber-700 font-semibold hidden md:inline-block bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                  사진당 최대 3MB
+                </span>
               </div>
             </div>
 

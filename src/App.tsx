@@ -7,7 +7,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DiaryEntry, TravelPhoto, ViewMode, VisitorLog } from './types';
 import { getStoredDiaries, saveDiaries, exportDiariesToJson, sortDiariesDescending } from './utils/storage';
 import { 
-  subscribeDiaries, 
+  syncInitialDiariesOnline,
+  fetchSingleDiaryOnline,
   saveDiaryToFirestore, 
   deleteDiaryFromFirestore,
   incrementDiaryViews,
@@ -84,20 +85,44 @@ export default function App() {
     }
   }, [autoLogoutNotice, clearAutoLogoutNotice]);
 
-  // Real-time synchronization with Firebase Firestore across all devices
+  // 1. On App Open: Immediately render from local cache, connect online to receive latest data, then switch to offline.
   useEffect(() => {
-    const unsubscribe = subscribeDiaries(
-      (updatedDiaries) => {
-        setDiaries(sortDiariesDescending(updatedDiaries));
-        setCloudSyncStatus('connected');
-      },
-      (error) => {
-        console.warn('Firestore sync note:', error);
-        setCloudSyncStatus('offline');
-      }
-    );
+    // 1-1. Immediate display from local cache
+    const cached = getStoredDiaries();
+    if (cached.length > 0) {
+      setDiaries(sortDiariesDescending(cached));
+    }
 
-    return () => unsubscribe();
+    // 1-2. Connect online to DB, retrieve data, and switch back to offline
+    let isMounted = true;
+    const runInitialSync = async () => {
+      setCloudSyncStatus('syncing');
+      try {
+        const freshDiaries = await syncInitialDiariesOnline();
+        if (isMounted) {
+          if (freshDiaries && freshDiaries.length > 0) {
+            setDiaries(sortDiariesDescending(freshDiaries));
+          }
+          setCloudSyncStatus('offline');
+          setToastMessage({
+            text: '온라인 데이터 수신 완료 후 오프라인 모드로 전환되었습니다.',
+            type: 'success',
+          });
+          setTimeout(() => setToastMessage(null), 3500);
+        }
+      } catch (err) {
+        console.warn('Initial online sync error:', err);
+        if (isMounted) {
+          setCloudSyncStatus('offline');
+        }
+      }
+    };
+
+    runInitialSync();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Manual or automatic synchronization trigger for pending offline operations
@@ -209,7 +234,7 @@ export default function App() {
     };
   }, []);
 
-  // Check and optimize existing diary photos if needed (720px max resize & high-efficiency compression)
+  // Check and optimize existing diary photos if needed (3MB limit check)
   const hasOptimizedExistingPhotosRef = useRef(false);
   useEffect(() => {
     if (diaries.length === 0 || hasOptimizedExistingPhotosRef.current) return;
@@ -231,7 +256,7 @@ export default function App() {
           }
 
           setToastMessage({
-            text: `기존 사진 ${totalOptimized}장 720px 이하 최적화 및 압축 재저장 완료`,
+            text: `사진 ${totalOptimized}장 3MB 이내 최적화 및 동기화 완료`,
             type: 'success',
           });
           setTimeout(() => setToastMessage(null), 4000);
@@ -338,10 +363,12 @@ export default function App() {
       return;
     }
 
-    // 3. Attempt cloud persistence
+    // 3. Attempt cloud persistence (Online work then switch to offline)
+    setCloudSyncStatus('syncing');
     try {
       await saveDiaryToFirestore(entry);
-      setToastMessage({ text: '클라우드에 안전하게 동기화되었습니다.', type: 'success' });
+      setCloudSyncStatus('offline');
+      setToastMessage({ text: '온라인 저장 완료 후 오프라인 모드로 안전하게 전환되었습니다.', type: 'success' });
       setTimeout(() => setToastMessage(null), 3000);
 
       // Drain any other pending queue items if online
@@ -349,6 +376,7 @@ export default function App() {
         processPendingSyncQueue().catch(console.warn);
       }
     } catch (err: unknown) {
+      setCloudSyncStatus('offline');
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.warn('Direct cloud sync not completed, checking error:', errorMsg);
 
@@ -424,16 +452,19 @@ export default function App() {
         return;
       }
 
-      // Persist deletion to Firestore across all devices
+      // Persist deletion to Firestore across all devices (Online work then switch to offline)
+      setCloudSyncStatus('syncing');
       try {
         await deleteDiaryFromFirestore(targetId);
-        setToastMessage({ text: '클라우드에서 일기가 삭제되었습니다.', type: 'success' });
+        setCloudSyncStatus('offline');
+        setToastMessage({ text: '온라인 삭제 완료 후 오프라인 모드로 전환되었습니다.', type: 'success' });
         setTimeout(() => setToastMessage(null), 3000);
 
         if (getPendingSyncCount() > 0) {
           processPendingSyncQueue().catch(console.warn);
         }
       } catch (err: unknown) {
+        setCloudSyncStatus('offline');
         const errorMsg = err instanceof Error ? err.message : String(err);
         console.warn('Direct delete not completed, checking error:', errorMsg);
 
@@ -469,56 +500,53 @@ export default function App() {
     return diaries.reduce((acc, d) => acc + (d.views || 0), 0);
   }, [diaries]);
 
-  // Handler: Select diary to read (tracks & increments visitor view count)
+  // Navigation: Next and Previous Diary in detail modal
+  const selectedDiaryIndex = useMemo(() => {
+    if (!selectedDiary) return -1;
+    return diaries.findIndex((d) => d.id === selectedDiary.id);
+  }, [diaries, selectedDiary]);
+
+  const handleNextDiary = () => {
+    if (selectedDiaryIndex >= 0 && selectedDiaryIndex < diaries.length - 1) {
+      handleSelectDiary(diaries[selectedDiaryIndex + 1]);
+    }
+  };
+
+  const handlePrevDiary = () => {
+    if (selectedDiaryIndex > 0) {
+      handleSelectDiary(diaries[selectedDiaryIndex - 1]);
+    }
+  };
+
+  // 2. Click Diary: Connects online to DB, receives fresh data & full photos, then switches to offline
   const handleSelectDiary = async (diary: DiaryEntry) => {
+    setCloudSyncStatus('syncing');
     let original = diaries.find((item) => item.id === diary.id) || diary;
 
-    // Load full attached photos from subcollection if diary has large photo set
-    if (original.hasSubcollectionPhotos) {
-      try {
-        const fullPhotos = await fetchDiaryFullPhotos(original.id);
-        if (fullPhotos.length > 0) {
-          original = { ...original, photos: fullPhotos };
-        }
-      } catch (err) {
-        console.warn('Subcollection photos fetch note:', err);
-      }
-    }
-
+    // Immediately show existing cached diary in modal for instant response
     setSelectedDiary(original);
 
-    // 관리자 모드로 들어가는 경우 방문자 카운터는 하지 않는다.
-    if (isAdmin) {
-      return;
-    }
-
-    // Check if this visitor already read this diary in the current session
-    const sessionKey = `visited_diary_${original.id}`;
-    let isNewVisit = false;
     try {
-      if (!sessionStorage.getItem(sessionKey)) {
-        isNewVisit = true;
+      // Connect online, retrieve freshest document & subcollection photos, then switch back to offline
+      const refreshed = await fetchSingleDiaryOnline(diary.id);
+      if (refreshed) {
+        original = refreshed;
+        setSelectedDiary(refreshed);
+        setDiaries((prev) =>
+          sortDiariesDescending(prev.map((d) => (d.id === refreshed.id ? refreshed : d)))
+        );
       }
-    } catch {
-      isNewVisit = true;
+
+      // If visitor, increment view count & record visitor location
+      if (!isAdmin) {
+        incrementDiaryViews(original.id).catch(console.warn);
+        recordVisitorLocation(original.id, original.title).catch(console.warn);
+      }
+    } catch (err) {
+      console.warn('Online fetch on diary click note:', err);
+    } finally {
+      setCloudSyncStatus('offline');
     }
-
-    if (isNewVisit) {
-      // Optimistic state update for instant UI feedback
-      setDiaries((prev) =>
-        prev.map((d) => (d.id === original.id ? { ...d, views: (d.views || 0) + 1 } : d))
-      );
-    }
-
-    // Increment in Firestore across all visitors
-    incrementDiaryViews(original.id).catch((err) => {
-      console.warn('View count sync warning:', err);
-    });
-
-    // Record visitor location and diary reading log for admin
-    recordVisitorLocation(original.id, original.title).catch((err) => {
-      console.warn('Visitor location logging error:', err);
-    });
   };
 
   // Handler: Open edit modal with full photos loaded if in subcollection
@@ -600,10 +628,15 @@ export default function App() {
     const startIndex = bikeShopIndex !== -1 ? bikeShopIndex : 0;
     const relevantDiaries = sorted.slice(startIndex);
 
+    // Filter only diaries where includeInDistance is not false (default: true)
+    const distanceDiaries = relevantDiaries.filter(
+      (d) => (d.location?.includeInDistance ?? d.includeInDistance ?? true) !== false
+    );
+
     let dist = 0;
-    for (let i = 0; i < relevantDiaries.length - 1; i++) {
-      const fromLoc = relevantDiaries[i]?.location;
-      const toLoc = relevantDiaries[i + 1]?.location;
+    for (let i = 0; i < distanceDiaries.length - 1; i++) {
+      const fromLoc = distanceDiaries[i]?.location;
+      const toLoc = distanceDiaries[i + 1]?.location;
       if (fromLoc && toLoc && typeof fromLoc.lat === 'number' && typeof toLoc.lat === 'number') {
         dist += calculateDistanceKm(
           fromLoc.lat,
@@ -809,6 +842,10 @@ export default function App() {
         onDelete={handleRequestDelete}
         onViewOnMap={handleViewOnMap}
         onOpenPhotoLightbox={handleOpenPhotoLightbox}
+        onNextDiary={handleNextDiary}
+        onPrevDiary={handlePrevDiary}
+        hasNext={selectedDiaryIndex >= 0 && selectedDiaryIndex < diaries.length - 1}
+        hasPrev={selectedDiaryIndex > 0}
       />
 
       <PhotoLightbox

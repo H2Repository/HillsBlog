@@ -346,10 +346,18 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
 
                     {/* Region on Cover */}
                     <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-white">
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/20 flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                        {diary.location.region}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/20 flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                          {diary.location.region}
+                        </span>
+                        {(diary.location?.includeInDistance ?? diary.includeInDistance ?? true) === false && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-stone-900/80 backdrop-blur-sm border border-stone-400/40 text-stone-200 flex items-center gap-1">
+                            <span>🚫</span>
+                            <span>거리 제외</span>
+                          </span>
+                        )}
+                      </div>
                       <span className="text-xs text-stone-300">
                         {diary.date}
                       </span>

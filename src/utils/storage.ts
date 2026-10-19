@@ -48,11 +48,24 @@ export function getStoredDiaries(): DiaryEntry[] {
 }
 
 export function saveDiaries(diaries: DiaryEntry[]): void {
+  const sorted = sortDiariesDescending(diaries);
   try {
-    const sorted = sortDiariesDescending(diaries);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
   } catch (e) {
-    console.error('Failed to save diaries to localStorage:', e);
+    console.warn('Direct localStorage save quota exceeded, trimming cache payload:', e);
+    try {
+      // If quota exceeded due to high-resolution 3MB photos, store lean preview copies in local cache
+      const leanDiaries = sorted.map((d) => ({
+        ...d,
+        photos: (d.photos || []).map((p) => ({
+          ...p,
+          url: p.url && p.url.length > 250000 ? p.url.slice(0, 250000) : p.url,
+        })),
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(leanDiaries));
+    } catch (innerErr) {
+      console.error('Failed to save fallback diaries to localStorage:', innerErr);
+    }
   }
 }
 

@@ -86,16 +86,23 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
       <div className="relative pl-6 sm:pl-8 space-y-8 before:absolute before:left-3 sm:before:left-4 before:top-4 before:bottom-4 before:w-0.5 before:bg-amber-300">
         {sorted.map((diary, idx) => {
           const coverPhoto = diary.photos.find(p => p.isCover) || diary.photos[0];
+          const isIncluded = (diary.location?.includeInDistance ?? diary.includeInDistance ?? true) !== false;
           let distFromPrev: number | null = null;
 
-          if (idx > 0) {
-            const prevDiary = sorted[idx - 1];
-            distFromPrev = calculateDistanceKm(
-              prevDiary.location.lat,
-              prevDiary.location.lng,
-              diary.location.lat,
-              diary.location.lng
-            );
+          if (idx > 0 && isIncluded) {
+            // Find closest previous stop that is also included in cumulative distance
+            for (let pIdx = idx - 1; pIdx >= 0; pIdx--) {
+              const pDiary = sorted[pIdx];
+              if ((pDiary.location?.includeInDistance ?? pDiary.includeInDistance ?? true) !== false) {
+                distFromPrev = calculateDistanceKm(
+                  pDiary.location.lat,
+                  pDiary.location.lng,
+                  diary.location.lat,
+                  diary.location.lng
+                );
+                break;
+              }
+            }
           }
 
           const originalDiary = diaries.find(item => item.id === diary.id) || diary;
@@ -107,13 +114,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 {ascending ? idx + 1 : sorted.length - idx}
               </div>
 
-              {/* Distance from previous stop badge */}
-              {distFromPrev !== null && distFromPrev > 0 && (
+              {/* Distance from previous stop badge or Excluded indicator */}
+              {!isIncluded ? (
+                <div className="mb-3 -mt-4 inline-flex items-center gap-1.5 text-[11px] font-semibold text-stone-600 bg-stone-100 border border-stone-300 px-2.5 py-0.5 rounded-full shadow-xs">
+                  <span>📍 누적 주행거리 제외 위치</span>
+                </div>
+              ) : distFromPrev !== null && distFromPrev > 0 ? (
                 <div className="mb-3 -mt-4 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50/90 border border-amber-200 px-2.5 py-0.5 rounded-full shadow-xs">
                   <Route className="w-3 h-3" />
                   <span>{t('timelineMovedDist', { dist: distFromPrev })}</span>
                 </div>
-              )}
+              ) : null}
 
               {/* Card */}
               <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-xs hover:shadow-md transition duration-200">
