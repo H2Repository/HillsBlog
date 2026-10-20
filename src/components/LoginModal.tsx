@@ -148,12 +148,8 @@ export const LoginModal: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setActiveTab('google'); setErrorMessage(null); }}
-                  className={`flex-1 py-2 rounded-lg transition flex items-center justify-center gap-1.5 ${
-                    activeTab === 'google' 
-                      ? 'bg-white text-stone-900 font-bold shadow-xs' 
-                      : 'text-stone-400 hover:text-stone-600'
-                  }`}
+                  disabled={true}
+                  className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-stone-300 cursor-not-allowed opacity-50"
                 >
                   <svg className="w-3.5 h-3.5 opacity-60" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -162,7 +158,6 @@ export const LoginModal: React.FC = () => {
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
                   </svg>
                   <span>Google 로그인</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-stone-200 text-stone-500 font-normal">비활성화</span>
                 </button>
               </div>
 

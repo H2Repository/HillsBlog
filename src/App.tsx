@@ -749,73 +749,8 @@ export default function App() {
             <span>•</span>
             <span>{t('footerArchive')}</span>
           </div>
-
-          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            {/* Flutter 소스 다운 (관리자 전용) */}
-            {isAdmin && (
-              <>
-                <div className="flex items-center gap-1.5 bg-stone-50 hover:bg-sky-50/60 border border-stone-200 hover:border-sky-300 px-2.5 py-1 rounded-lg transition shadow-2xs">
-                  <button
-                    id="btn-footer-download-flutter"
-                    type="button"
-                    onClick={handleDownloadFlutterZip}
-                    disabled={isDownloadingFlutter}
-                    className="text-stone-700 hover:text-sky-700 flex items-center gap-1.5 transition text-xs font-semibold cursor-pointer disabled:opacity-50"
-                    title={t('footerDownloadFlutterTitle')}
-                  >
-                    <FlutterIcon className={`w-4 h-4 ${isDownloadingFlutter ? 'animate-bounce' : ''}`} />
-                    <span>{isDownloadingFlutter ? 'ZIP 다운로드 중...' : t('downloadFlutterZip')}</span>
-                    <Download className="w-3.5 h-3.5 text-sky-600" />
-                  </button>
-                  <button
-                    id="btn-footer-view-flutter-code"
-                    type="button"
-                    onClick={() => setIsFlutterCodeOpen(true)}
-                    className="text-[11px] text-stone-500 hover:text-sky-800 bg-white hover:bg-sky-100 border border-stone-200 px-1.5 py-0.5 rounded transition cursor-pointer font-medium"
-                    title={t('viewFlutterCode')}
-                  >
-                    코드보기
-                  </button>
-                </div>
-                <span className="text-stone-300">•</span>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => exportDiariesToJson(diaries)}
-              className="text-stone-400 hover:text-stone-700 transition"
-              title={t('exportBackup')}
-            >
-              {t('exportBackup')}
-            </button>
-          </div>
         </div>
       </footer>
-
-      {/* Floating Action Button (Mobile & Desktop Quick Add) */}
-      <button
-        id="btn-floating-add-diary"
-        type="button"
-        onClick={() => {
-          if (isAdmin) {
-            setEditingDiary(null);
-            setIsEditorOpen(true);
-          } else {
-            openLoginModal('새 일기 작성은 관리자만 가능합니다. 로그인해주세요.');
-          }
-        }}
-        className={`fixed bottom-6 right-6 z-30 p-4 rounded-full text-white shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 flex items-center justify-center group cursor-pointer ${
-          isAdmin
-            ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/40'
-            : 'bg-stone-800 hover:bg-stone-700 shadow-stone-900/40'
-        }`}
-        title={isAdmin ? t('writeDiary') : '새 일기 쓰기 (관리자 로그인 필요)'}
-      >
-        <Plus className="w-6 h-6" />
-        <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-xs group-hover:ml-2 transition-all duration-300 text-xs font-bold">
-          {isAdmin ? t('writeDiary') : '+'}
-        </span>
-      </button>
 
       {/* Modals */}
       <LoginModal />
@@ -903,7 +838,7 @@ export default function App() {
 
       {/* Download Notification Toast */}
       {downloadNotification && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-stone-900/95 text-white text-xs font-medium shadow-2xl border border-stone-700 flex items-center gap-2 backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-stone-900/95 text-white text-xs font-medium shadow-2xl border border-stone-700 flex items-center gap-2 backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
           <Download className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{downloadNotification}</span>
         </div>
