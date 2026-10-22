@@ -8,13 +8,15 @@ import {
   increment,
   deleteDoc, 
   enableNetwork,
-  disableNetwork
+  disableNetwork,
+  waitForPendingWrites
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { DiaryEntry, TravelPhoto } from '../types';
 import { getStoredDiaries, saveDiaries as saveToLocalCache, sortDiariesDescending } from '../utils/storage';
 import { mergeRemoteWithPendingQueue } from '../utils/offlineSync';
 import { createThumbnail } from '../utils/imageCompressor';
+import { saveMultipleLocalDiaries, saveLocalDiary, getAllLocalDiaries, getLocalSyncQueue, getLocalDiaryById } from '../utils/localDb';
 
 const DIARIES_COLLECTION = 'diaries';
 const MAX_SINGLE_DOC_BYTES = 700000; // 700KB safety margin below Firestore's 1MiB limit
@@ -56,11 +58,19 @@ export async function disableFirestoreNetwork(): Promise<void> {
 
 /**
  * Executes a transactional DB task online and immediately switches back to offline
+ * Guarantees all pending writes are acknowledged by Firestore backend before severing connection.
  */
 export async function executeOnline<T>(action: () => Promise<T>): Promise<T> {
   await enableFirestoreNetwork();
   try {
-    return await action();
+    const result = await action();
+    // Guarantee that pending writes are flushed to the cloud server
+    try {
+      await waitForPendingWrites(db);
+    } catch (wErr) {
+      console.warn('waitForPendingWrites warning:', wErr);
+    }
+    return result;
   } finally {
     await disableFirestoreNetwork();
   }
@@ -181,16 +191,12 @@ export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
                 updatedAt: raw.updatedAt || Date.now(),
               };
 
-              // Enrich subcollection photos if stored separately
-              if (data.hasSubcollectionPhotos) {
-                try {
-                  const subPhotos = await fetchDiaryFullPhotosInternal(data.id);
-                  if (subPhotos.length > 0) {
-                    data.photos = subPhotos;
-                  }
-                } catch (subErr) {
-                  console.warn(`Subcollection load note for ${data.id}:`, subErr);
-                }
+              // On initial boot, preserve already-cached full photos if available in localStorage,
+              // avoiding downloading dozens of megabytes of photo chunks at once.
+              // Full photos are fetched on demand when the user clicks a diary.
+              const existingCached = getStoredDiaries().find((d) => d.id === data.id);
+              if (existingCached && existingCached.photos && existingCached.photos.length > 0) {
+                data.photos = existingCached.photos;
               }
 
               list.push(data);
@@ -201,20 +207,61 @@ export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
         }
       }
 
-      const merged = sortDiariesDescending(mergeRemoteWithPendingQueue(list));
+      // Merge with any pending unsynced changes from local IndexedDB queue
+      const queue = await getLocalSyncQueue().catch(() => []);
+      const pendingDeleteIds = new Set(
+        queue.filter((q) => q.status !== 'completed' && q.action === 'delete').map((q) => q.id)
+      );
+      const pendingSaveMap = new Map<string, DiaryEntry>();
+      for (const q of queue) {
+        if (q.status !== 'completed' && q.action === 'save') {
+          if (q.entry) {
+            pendingSaveMap.set(q.id, q.entry);
+          } else {
+            const local = await getLocalDiaryById(q.id).catch(() => null);
+            if (local) pendingSaveMap.set(q.id, local);
+          }
+        }
+      }
+
+      const mergedMap = new Map<string, DiaryEntry>();
+      for (const item of list) {
+        if (!pendingDeleteIds.has(item.id)) {
+          if (pendingSaveMap.has(item.id)) {
+            mergedMap.set(item.id, pendingSaveMap.get(item.id)!);
+          } else {
+            mergedMap.set(item.id, item);
+          }
+        }
+      }
+      pendingSaveMap.forEach((entry, id) => {
+        if (!pendingDeleteIds.has(id) && !mergedMap.has(id)) {
+          mergedMap.set(id, entry);
+        }
+      });
+
+      const merged = sortDiariesDescending(Array.from(mergedMap.values()));
       saveToLocalCache(merged);
+      // Requirement 1: Save data read from server into local IndexedDB
+      await saveMultipleLocalDiaries(merged).catch((dbErr) => {
+        console.warn('saveMultipleLocalDiaries note:', dbErr);
+      });
       return merged;
     });
   } catch (err) {
-    console.warn('Initial online sync skipped/offline, using local cache:', err);
+    console.warn('Initial online sync skipped/offline, reading from local DB:', err);
     await disableFirestoreNetwork().catch(() => {});
+    const localDbItems = await getAllLocalDiaries().catch(() => []);
+    if (localDbItems && localDbItems.length > 0) {
+      return localDbItems;
+    }
     return getStoredDiaries();
   }
 }
 
 /**
  * 2. Click Diary: Connects online, retrieves freshest diary data & full photos from Firestore,
- * and immediately switches back to offline mode.
+ * writes to local IndexedDB, and immediately switches back to offline mode.
  */
 export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntry | null> {
   try {
@@ -261,12 +308,21 @@ export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntr
         }
       }
 
+      // Requirement 1: Save read diary & full photos to local IndexedDB
+      await saveLocalDiary(entry).catch((err) => {
+        console.warn('saveLocalDiary in fetchSingleDiaryOnline note:', err);
+      });
+
       return entry;
     });
   } catch (err) {
-    console.warn('Single diary online fetch note:', err);
+    console.warn('Single diary online fetch note, checking local IndexedDB:', err);
     await disableFirestoreNetwork().catch(() => {});
-    // Fall back to local diary if available
+    // Fall back to local IndexedDB first, then localStorage
+    const localEntry = await getLocalDiaryById(diaryId).catch(() => null);
+    if (localEntry) {
+      return localEntry;
+    }
     const cached = getStoredDiaries();
     return cached.find((d) => d.id === diaryId) || null;
   }

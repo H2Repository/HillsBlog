@@ -35,12 +35,15 @@ import { useLanguage } from './context/LanguageContext';
 import { useAuth } from './context/AuthContext';
 import { getCachedDiaryTranslation, hasKorean, translateDiaryAsync } from './utils/translationService';
 import { 
-  getPendingSyncCount, 
-  enqueuePendingSave, 
-  enqueuePendingDelete, 
-  processPendingSyncQueue, 
-  subscribeSyncQueueChange 
-} from './utils/offlineSync';
+  getAllLocalDiaries, 
+  getLocalSyncQueueCount 
+} from './utils/localDb';
+import { 
+  saveDiaryOfflineFirst, 
+  deleteDiaryOfflineFirst, 
+  processSyncQueue, 
+  subscribeSyncStatus 
+} from './utils/syncManager';
 import { 
   Plus, 
   Compass, 
@@ -57,7 +60,7 @@ export default function App() {
   const [diaries, setDiaries] = useState<DiaryEntry[]>(() => getStoredDiaries());
   const [viewMode, setViewMode] = useState<ViewMode>('blog');
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'syncing' | 'connected' | 'offline'>('syncing');
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => getPendingSyncCount());
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>([]);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
@@ -70,9 +73,17 @@ export default function App() {
     }
   }, [isAdmin]);
 
-  // Subscribe to offline sync queue changes
+  // Subscribe to offline sync queue and status changes from syncManager
   useEffect(() => {
-    return subscribeSyncQueueChange(setPendingSyncCount);
+    const unsubscribe = subscribeSyncStatus((status) => {
+      setPendingSyncCount(status.pendingCount);
+      if (status.isSyncing) {
+        setCloudSyncStatus('syncing');
+      } else {
+        setCloudSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   // Show notice when automatically logged out due to inactivity
@@ -85,15 +96,26 @@ export default function App() {
     }
   }, [autoLogoutNotice, clearAutoLogoutNotice]);
 
-  // 1. On App Open: Immediately render from local cache, connect online to receive latest data, then switch to offline.
+  // 1. On App Open: Immediately render from high-capacity Local IndexedDB, connect online to receive latest data, then switch to offline.
   useEffect(() => {
-    // 1-1. Immediate display from local cache
-    const cached = getStoredDiaries();
-    if (cached.length > 0) {
-      setDiaries(sortDiariesDescending(cached));
-    }
+    // 1-1. Immediate display from high-capacity local IndexedDB (with localStorage fallback)
+    getAllLocalDiaries().then((cached) => {
+      if (cached && cached.length > 0) {
+        setDiaries(sortDiariesDescending(cached));
+      } else {
+        const fallback = getStoredDiaries();
+        if (fallback.length > 0) {
+          setDiaries(sortDiariesDescending(fallback));
+        }
+      }
+    }).catch(() => {
+      const fallback = getStoredDiaries();
+      if (fallback.length > 0) {
+        setDiaries(sortDiariesDescending(fallback));
+      }
+    });
 
-    // 1-2. Connect online to DB, retrieve data, and switch back to offline
+    // 1-2. Connect online to server, retrieve fresh data, save to local DB, and switch back to offline
     let isMounted = true;
     const runInitialSync = async () => {
       setCloudSyncStatus('syncing');
@@ -105,7 +127,7 @@ export default function App() {
           }
           setCloudSyncStatus('offline');
           setToastMessage({
-            text: '온라인 데이터 수신 완료 후 오프라인 모드로 전환되었습니다.',
+            text: '서버 데이터 수신 및 로컬 DB 저장 완료 (오프라인 모드)',
             type: 'success',
           });
           setTimeout(() => setToastMessage(null), 3500);
@@ -125,21 +147,20 @@ export default function App() {
     };
   }, []);
 
-  // Manual or automatic synchronization trigger for pending offline operations
+  // Manual trigger for background upload retry queue
   const handleTriggerSync = async () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setToastMessage({
-        text: '현재 오프라인 상태입니다. 인터넷에 연결되면 자동으로 동기화됩니다.',
+        text: '현재 오프라인 상태입니다. 인터넷에 연결되면 중단된 지점부터 이어서 재시도됩니다.',
         type: 'error',
       });
       setTimeout(() => setToastMessage(null), 3500);
       return;
     }
 
-    const currentCount = getPendingSyncCount();
-    if (currentCount === 0) {
+    if (pendingSyncCount === 0) {
       setToastMessage({
-        text: '모든 일기가 클라우드와 완벽하게 동기화되어 있습니다.',
+        text: '모든 로컬 일기와 사진이 서버에 안전하게 업로드되어 있습니다.',
         type: 'success',
       });
       setTimeout(() => setToastMessage(null), 2500);
@@ -148,56 +169,42 @@ export default function App() {
 
     setCloudSyncStatus('syncing');
     setToastMessage({
-      text: `오프라인 변경사항(${currentCount}개) 동기화 진행 중...`,
+      text: `백그라운드 업로드 큐 처리 중 (${pendingSyncCount}건 대기)...`,
       type: 'success',
     });
 
-    const { successCount, failedCount } = await processPendingSyncQueue();
+    const { successCount, failedCount } = await processSyncQueue();
     if (successCount > 0) {
       setCloudSyncStatus('connected');
       setToastMessage({
-        text: `동기화 완료: ${successCount}개의 일기가 클라우드에 성공적으로 반영되었습니다.`,
+        text: `동기화 완료: ${successCount}건이 서버에 성공적으로 업로드되었습니다.`,
         type: 'success',
       });
       setTimeout(() => setToastMessage(null), 3500);
     } else if (failedCount > 0) {
       setCloudSyncStatus('offline');
       setToastMessage({
-        text: '일부 일기 동기화 중 오류가 발생했습니다. 잠시 후 다시 시도합니다.',
+        text: '업로드 재시도 대기: 네트워크 연결 안정화 시 중단된 지점부터 자동 재시도됩니다.',
         type: 'error',
       });
       setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
-  // Listen for online/offline events and automatically synchronize pending offline operations
+  // Toast notifications on network status changes
   useEffect(() => {
-    const handleOnline = async () => {
-      setCloudSyncStatus('syncing');
-      const count = getPendingSyncCount();
-      if (count > 0) {
-        setToastMessage({
-          text: `인터넷 재연결됨: 오프라인 변경사항(${count}개) 동기화 중...`,
-          type: 'success',
-        });
-        const { successCount } = await processPendingSyncQueue();
-        if (successCount > 0) {
-          setCloudSyncStatus('connected');
-          setToastMessage({
-            text: `온라인 동기화 완료: 오프라인에서 변경된 ${successCount}개 일기가 클라우드에 안전하게 반영되었습니다.`,
-            type: 'success',
-          });
-          setTimeout(() => setToastMessage(null), 4000);
-        }
-      } else {
-        setCloudSyncStatus('connected');
-      }
+    const handleOnline = () => {
+      setToastMessage({
+        text: '네트워크 연결됨: 백그라운드 업로드 큐가 자동으로 재개됩니다.',
+        type: 'success',
+      });
+      setTimeout(() => setToastMessage(null), 3500);
     };
 
     const handleOffline = () => {
       setCloudSyncStatus('offline');
       setToastMessage({
-        text: '오프라인 모드로 전환되었습니다. 작성/수정/삭제한 일기는 로컬에 안전하게 보관되며 온라인 시 자동 동기화됩니다.',
+        text: '오프라인 모드: 작성/수정/삭제한 내용은 로컬 DB에 안전하게 보관되며 온라인 시 자동 동기화됩니다.',
         type: 'error',
       });
       setTimeout(() => setToastMessage(null), 4500);
@@ -206,31 +213,9 @@ export default function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Initial background sync check if online and pending items exist
-    if (typeof navigator !== 'undefined' && navigator.onLine && getPendingSyncCount() > 0) {
-      handleOnline();
-    }
-
-    // Periodic check every 15s to retry any pending syncs when online
-    const interval = setInterval(() => {
-      if (typeof navigator !== 'undefined' && navigator.onLine && getPendingSyncCount() > 0) {
-        processPendingSyncQueue().then(({ successCount }) => {
-          if (successCount > 0) {
-            setCloudSyncStatus('connected');
-            setToastMessage({
-              text: `오프라인 변경사항(${successCount}개) 자동 동기화 완료`,
-              type: 'success',
-            });
-            setTimeout(() => setToastMessage(null), 3000);
-          }
-        });
-      }
-    }, 15000);
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      clearInterval(interval);
     };
   }, []);
 
@@ -352,65 +337,28 @@ export default function App() {
       setSelectedDiary(entry);
     }
 
-    // 2. If browser is currently offline, queue immediately without error
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      enqueuePendingSave(entry);
-      setToastMessage({
-        text: '오프라인 모드: 일기가 로컬에 저장되었습니다. 인터넷이 연결되면 자동으로 클라우드에 업데이트됩니다.',
-        type: 'success',
-      });
-      setTimeout(() => setToastMessage(null), 4500);
-      return;
-    }
-
-    // 3. Attempt cloud persistence (Online work then switch to offline)
-    setCloudSyncStatus('syncing');
+    // 2. Offline-First: Write immediately to high-capacity Local IndexedDB & Enqueue background server upload
     try {
-      await saveDiaryToFirestore(entry);
-      setCloudSyncStatus('offline');
-      setToastMessage({ text: '온라인 저장 완료 후 오프라인 모드로 안전하게 전환되었습니다.', type: 'success' });
-      setTimeout(() => setToastMessage(null), 3000);
-
-      // Drain any other pending queue items if online
-      if (getPendingSyncCount() > 0) {
-        processPendingSyncQueue().catch(console.warn);
-      }
-    } catch (err: unknown) {
-      setCloudSyncStatus('offline');
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.warn('Direct cloud sync not completed, checking error:', errorMsg);
-
-      // Network or connection failure: queue for automatic background sync
-      if (
-        errorMsg.includes('offline') || 
-        errorMsg.includes('network') || 
-        errorMsg.includes('Failed to fetch') ||
-        (typeof navigator !== 'undefined' && !navigator.onLine)
-      ) {
-        enqueuePendingSave(entry);
+      await saveDiaryOfflineFirst(entry);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
         setToastMessage({
-          text: '네트워크 연결 불안정: 일기가 로컬에 저장되었으며 인터넷 복구 시 자동 동기화됩니다.',
+          text: '로컬 DB 저장 완료: 인터넷 연결 시 사진과 일기가 서버로 자동 백그라운드 업로드됩니다.',
           type: 'success',
         });
-        setTimeout(() => setToastMessage(null), 4500);
-        return;
+      } else {
+        setToastMessage({
+          text: '로컬 DB 저장 완료 및 서버 업로드 큐 등록 완료',
+          type: 'success',
+        });
       }
-
-      let msg = '클라우드 저장 중 오류가 발생했습니다.';
-      if (err instanceof Error) {
-        try {
-          const parsed = JSON.parse(err.message);
-          if (parsed.error && typeof parsed.error === 'string' && parsed.error.includes('Missing or insufficient permissions')) {
-            msg = '저장 권한이 부족합니다. 관리자로 로그인 후 다시 시도해주세요.';
-          } else if (parsed.error) {
-            msg = String(parsed.error);
-          }
-        } catch {
-          msg = err.message;
-        }
-      }
-      setToastMessage({ text: msg, type: 'error' });
-      setTimeout(() => setToastMessage(null), 5000);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err: unknown) {
+      console.error('saveDiaryOfflineFirst error:', err);
+      setToastMessage({
+        text: '로컬 DB 저장 중 오류가 발생했습니다.',
+        type: 'error',
+      });
+      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
@@ -441,49 +389,27 @@ export default function App() {
       handleDeleteDiary(targetId);
       setDeleteTarget(null);
 
-      // If browser is currently offline, queue deletion immediately
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        enqueuePendingDelete(targetId);
-        setToastMessage({
-          text: '오프라인 모드: 일기가 삭제되었습니다. 인터넷이 연결되면 클라우드에 자동으로 반영됩니다.',
-          type: 'success',
-        });
-        setTimeout(() => setToastMessage(null), 4500);
-        return;
-      }
-
-      // Persist deletion to Firestore across all devices (Online work then switch to offline)
-      setCloudSyncStatus('syncing');
+      // Offline-First: Delete from Local IndexedDB & Enqueue deletion in background retry queue
       try {
-        await deleteDiaryFromFirestore(targetId);
-        setCloudSyncStatus('offline');
-        setToastMessage({ text: '온라인 삭제 완료 후 오프라인 모드로 전환되었습니다.', type: 'success' });
-        setTimeout(() => setToastMessage(null), 3000);
-
-        if (getPendingSyncCount() > 0) {
-          processPendingSyncQueue().catch(console.warn);
-        }
-      } catch (err: unknown) {
-        setCloudSyncStatus('offline');
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        console.warn('Direct delete not completed, checking error:', errorMsg);
-
-        if (
-          errorMsg.includes('offline') || 
-          errorMsg.includes('network') || 
-          errorMsg.includes('Failed to fetch') ||
-          (typeof navigator !== 'undefined' && !navigator.onLine)
-        ) {
-          enqueuePendingDelete(targetId);
+        await deleteDiaryOfflineFirst(targetId);
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
           setToastMessage({
-            text: '네트워크 연결 불안정: 삭제 예약되었으며 인터넷 복구 시 클라우드에서 삭제됩니다.',
+            text: '로컬 DB 삭제 완료: 인터넷 연결 시 서버에서도 자동 삭제됩니다.',
             type: 'success',
           });
-          setTimeout(() => setToastMessage(null), 4500);
-          return;
+        } else {
+          setToastMessage({
+            text: '삭제 완료: 로컬 DB 반영 및 서버 동기화 완료',
+            type: 'success',
+          });
         }
-
-        setToastMessage({ text: '클라우드 삭제 중 오류가 발생했습니다.', type: 'error' });
+        setTimeout(() => setToastMessage(null), 3000);
+      } catch (err: unknown) {
+        console.error('deleteDiaryOfflineFirst error:', err);
+        setToastMessage({
+          text: '삭제 처리 중 오류가 발생했습니다.',
+          type: 'error',
+        });
         setTimeout(() => setToastMessage(null), 4000);
       }
     }

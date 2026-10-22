@@ -79,10 +79,18 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
   onSave,
   initialEntry,
 }) => {
+  const getTodayDateString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Form State
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => getTodayDateString());
   const [time, setTime] = useState(() => {
     const now = new Date();
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -131,7 +139,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
     const now = new Date();
     setTitle('');
     setContent('');
-    setDate(now.toISOString().slice(0, 10));
+    setDate(getTodayDateString());
     setTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
     setWeather('sunny');
     setRating(5);

@@ -12,7 +12,7 @@ import { auth } from '../lib/firebase';
 export const ADMIN_EMAIL = 'htol65@gmail.com';
 const ADMIN_SESSION_STORAGE_KEY = 'hills_blog_admin_session';
 const LAST_ACTIVITY_STORAGE_KEY = 'hills_blog_last_activity';
-const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const INACTIVITY_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours (하루 종일 안정적인 글 작성 유지)
 
 export interface AppUser {
   uid: string;
@@ -70,7 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(null);
     closeLoginModal();
     if (isAuto) {
-      setAutoLogoutNotice('5분 동안 활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
+      setAutoLogoutNotice('24시간 동안 활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
     }
   }, [closeLoginModal]);
 
