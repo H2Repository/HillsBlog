@@ -10,13 +10,42 @@ import {
   getLocalDiaryById,
   SyncQueueItem
 } from './localDb';
-import { saveDiaryToFirestore, deleteDiaryFromFirestore } from '../services/diaryFirestore';
+import { 
+  saveDiaryToFirestoreInternal, 
+  deleteDiaryFromFirestoreInternal, 
+  activateOnlineSession 
+} from '../services/diaryFirestore';
 
 export interface SyncStatus {
   pendingCount: number;
   isSyncing: boolean;
   lastSuccessTime: number | null;
   lastError: string | null;
+}
+
+let pendingSyncIds = new Set<string>();
+
+/**
+ * Checks whether a specific diary is pending sync in the offline/retry queue.
+ * Returns true if the diary has unsynced local changes.
+ */
+export function isDiaryPendingSync(diaryId: string): boolean {
+  return pendingSyncIds.has(diaryId);
+}
+
+export function getPendingSyncIds(): string[] {
+  return Array.from(pendingSyncIds);
+}
+
+export async function refreshPendingSyncIds(): Promise<Set<string>> {
+  try {
+    const queue = await getLocalSyncQueue();
+    const active = queue.filter((item) => item.status !== 'completed').map((item) => item.id);
+    pendingSyncIds = new Set(active);
+  } catch {
+    pendingSyncIds = new Set();
+  }
+  return pendingSyncIds;
 }
 
 type SyncListener = (status: SyncStatus) => void;
@@ -30,6 +59,7 @@ let currentStatus: SyncStatus = {
 };
 
 function notifySyncListeners() {
+  refreshPendingSyncIds().catch(() => {});
   syncListeners.forEach((listener) => {
     try {
       listener({ ...currentStatus });
@@ -45,8 +75,8 @@ function notifySyncListeners() {
 export function subscribeSyncStatus(listener: SyncListener): () => void {
   syncListeners.add(listener);
   // Initial immediate notification
-  getLocalSyncQueueCount().then((count) => {
-    currentStatus.pendingCount = count;
+  refreshPendingSyncIds().then((ids) => {
+    currentStatus.pendingCount = ids.size;
     listener({ ...currentStatus });
   }).catch(() => {
     listener({ ...currentStatus });
@@ -94,6 +124,9 @@ export async function processSyncQueue(
   currentStatus.pendingCount = actionableItems.length;
   notifySyncListeners();
 
+  // Ensure Firestore is connected online during queue processing
+  await activateOnlineSession().catch(() => {});
+
   let successCount = 0;
   let failedCount = 0;
 
@@ -121,7 +154,7 @@ export async function processSyncQueue(
           }
 
           if (entryToSave) {
-            await saveDiaryToFirestore(entryToSave);
+            await saveDiaryToFirestoreInternal(entryToSave);
           } else {
             console.warn(`Sync queue item ${item.id} has no diary content, skipping.`);
           }
@@ -131,7 +164,7 @@ export async function processSyncQueue(
           currentStatus.lastSuccessTime = Date.now();
           currentStatus.lastError = null;
         } else if (item.action === 'delete') {
-          await deleteDiaryFromFirestore(item.id);
+          await deleteDiaryFromFirestoreInternal(item.id);
           await dequeueLocalSyncItem(item.id);
           successCount++;
           currentStatus.lastSuccessTime = Date.now();
@@ -199,11 +232,13 @@ export async function saveDiaryOfflineFirst(entry: DiaryEntry): Promise<void> {
   currentStatus.pendingCount = await getLocalSyncQueueCount();
   notifySyncListeners();
 
-  // 3. If online, initiate background sync immediately
+  // 3. If online, activate online session and initiate background sync immediately
   if (typeof navigator !== 'undefined' && navigator.onLine) {
-    processSyncQueue().catch((err) => {
-      console.warn('Background sync trigger note:', err);
-    });
+    activateOnlineSession()
+      .then(() => processSyncQueue())
+      .catch((err) => {
+        console.warn('Background sync trigger note:', err);
+      });
   }
 }
 
@@ -222,11 +257,13 @@ export async function deleteDiaryOfflineFirst(diaryId: string): Promise<void> {
   currentStatus.pendingCount = await getLocalSyncQueueCount();
   notifySyncListeners();
 
-  // 3. If online, trigger background delete
+  // 3. If online, activate online session and trigger background delete
   if (typeof navigator !== 'undefined' && navigator.onLine) {
-    processSyncQueue().catch((err) => {
-      console.warn('Background delete trigger note:', err);
-    });
+    activateOnlineSession()
+      .then(() => processSyncQueue())
+      .catch((err) => {
+        console.warn('Background delete trigger note:', err);
+      });
   }
 }
 
@@ -238,7 +275,9 @@ if (typeof window !== 'undefined') {
   // Re-attempt sync when internet connection is restored
   window.addEventListener('online', () => {
     console.log('[SyncManager] Network online detected. Resuming background upload queue...');
-    processSyncQueue().catch(console.warn);
+    activateOnlineSession()
+      .then(() => processSyncQueue())
+      .catch(console.warn);
   });
 
   // Re-attempt sync when user switches back to this browser tab

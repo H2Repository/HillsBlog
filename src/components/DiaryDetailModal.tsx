@@ -26,9 +26,12 @@ import {
   Languages,
   Loader2,
   Eye,
-  Users
+  Users,
+  Camera
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { isDiaryPendingSync } from '../utils/syncManager';
+import { fetchDiaryFullPhotos } from '../services/diaryFirestore';
 
 interface DiaryDetailModalProps {
   diary: DiaryEntry | null;
@@ -128,6 +131,26 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
       };
     }
   }, [isOpen, diary, language, showOriginal]);
+
+  // Ensure full photos are loaded if diary currently has only partial photos
+  useEffect(() => {
+    if (!isOpen || !diary) return;
+    const expected = Math.max(diary.totalPhotosCount || 0, diary.photos?.length || 0);
+    if ((expected > diary.photos.length || diary.hasSubcollectionPhotos) && diary.id) {
+      let isCancelled = false;
+      fetchDiaryFullPhotos(diary.id)
+        .then((fullPhotos) => {
+          if (!isCancelled && fullPhotos && fullPhotos.length > diary.photos.length) {
+            diary.photos = fullPhotos;
+            setAsyncDiary((prev) => (prev ? { ...prev, photos: fullPhotos } : { ...diary, photos: fullPhotos }));
+          }
+        })
+        .catch(() => {});
+      return () => {
+        isCancelled = true;
+      };
+    }
+  }, [isOpen, diary?.id]);
 
   useEffect(() => {
     if (!isOpen || !diary) return;
@@ -268,31 +291,38 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
               <span className="hidden sm:inline">{copied ? t('btnShared') : t('btnShare')}</span>
             </button>
 
-            {/* Admin only actions: Edit & Delete */}
-            {isAdmin && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onEdit(diary)}
-                  className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition text-xs flex items-center gap-1 cursor-pointer"
-                  title={t('cardEdit')}
-                >
-                  <Edit3 className="w-4 h-4" />
-                  <span className="hidden sm:inline">{t('cardEdit')}</span>
-                </button>
+            {/* Admin only actions: Edit & Delete (Allowed only when online & synchronized) */}
+            {isAdmin && (() => {
+              const isLocked = isDiaryPendingSync(diary.id) || (typeof navigator !== 'undefined' && !navigator.onLine);
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(diary)}
+                    className={`p-1.5 rounded-lg transition text-xs flex items-center gap-1 cursor-pointer ${
+                      isLocked ? 'text-stone-500 hover:text-amber-400 hover:bg-stone-800/80' : 'text-stone-400 hover:text-white hover:bg-stone-800'
+                    }`}
+                    title={isLocked ? '수정은 서버와 연결되고 동기화가 완료된 상태에서만 가능합니다' : t('cardEdit')}
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span className="hidden sm:inline">{t('cardEdit')}</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    onDelete(diary);
-                  }}
-                  className="p-1.5 rounded-lg text-stone-400 hover:text-rose-400 hover:bg-stone-800 transition text-xs cursor-pointer"
-                  title={t('cardDelete')}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
-            )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDelete(diary);
+                    }}
+                    className={`p-1.5 rounded-lg transition text-xs cursor-pointer ${
+                      isLocked ? 'text-stone-500 hover:text-rose-400 hover:bg-stone-800/80' : 'text-stone-400 hover:text-rose-400 hover:bg-stone-800'
+                    }`}
+                    title={isLocked ? '삭제는 서버와 연결되고 동기화가 완료된 상태에서만 가능합니다' : t('cardDelete')}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              );
+            })()}
 
             <div className="w-px h-4 bg-stone-700 mx-1" />
 
@@ -322,8 +352,9 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
               <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-transparent to-black/20" />
 
               {/* Photo Count badge */}
-              <div className="absolute top-4 right-4 bg-stone-900/80 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-full border border-white/20">
-                {t('totalPhotosCount', { count: displayDiary.photos.length })}
+              <div className="absolute top-4 right-4 bg-stone-900/80 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-full border border-white/20 flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5 text-amber-300" />
+                <span>{t('totalPhotosCount', { count: Math.max(displayDiary.totalPhotosCount || 0, displayDiary.photos.length) })}</span>
               </div>
 
               {/* Cover Caption */}
@@ -336,14 +367,15 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
           )}
 
           {/* Photo Thumbnail Strip if multiple photos */}
-          {displayDiary.photos.length > 1 && (
+          {(displayDiary.photos.length > 1 || (displayDiary.totalPhotosCount || 0) > 1) && (
             <div className="px-6 py-3 bg-stone-100/70 border-b border-stone-200 flex items-center gap-2.5 overflow-x-auto">
               {displayDiary.photos.map((photo, idx) => (
                 <button
-                  key={photo.id}
+                  key={photo.id || idx}
                   type="button"
                   onClick={() => onOpenPhotoLightbox(displayDiary.photos, idx)}
-                  className="w-16 h-16 rounded-xl overflow-hidden border-2 border-white shadow-sm shrink-0 hover:opacity-90 hover:scale-105 transition"
+                  className="w-16 h-16 rounded-xl overflow-hidden border-2 border-white shadow-sm shrink-0 hover:opacity-90 hover:scale-105 transition cursor-pointer"
+                  title={photo.caption || `사진 ${idx + 1}`}
                 >
                   <img src={photo.url} alt="" className="w-full h-full object-cover" />
                 </button>

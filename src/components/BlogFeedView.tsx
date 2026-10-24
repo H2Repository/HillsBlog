@@ -31,9 +31,10 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { isDiaryPendingSync } from '../utils/syncManager';
 
-const INITIAL_VISIBLE_COUNT = 12;
-const PAGE_SIZE = 8;
+const INITIAL_VISIBLE_COUNT = 4;
+const PAGE_SIZE = 4;
 
 interface BlogFeedViewProps {
   diaries: DiaryEntry[];
@@ -329,12 +330,19 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                     <div className="absolute inset-0 bg-gradient-to-t from-stone-950/60 via-transparent to-transparent opacity-80" />
 
                     {/* Photo Count Pill */}
-                    {diary.photos.length > 1 && (
-                      <span className="absolute top-3 right-3 bg-stone-900/80 backdrop-blur-sm text-white text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 border border-white/20">
-                        <Camera className="w-3 h-3" />
-                        <span>+{diary.photos.length}</span>
-                      </span>
-                    )}
+                    {(() => {
+                      const count = Math.max(diary.totalPhotosCount || 0, diary.photos?.length || 0);
+                      if (count <= 1) return null;
+                      return (
+                        <span 
+                          className="absolute top-3 right-3 bg-stone-900/85 backdrop-blur-sm text-white text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-white/25 shadow-md"
+                          title={t('totalPhotosCount', { count })}
+                        >
+                          <Camera className="w-3.5 h-3.5 text-amber-300" />
+                          <span>{count}</span>
+                        </span>
+                      );
+                    })()}
 
                     {/* Real-time GPS verification pill */}
                     {diary.location.isRealtimeGps && (
@@ -428,19 +436,6 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                     </p>
                   </div>
 
-                  {/* Regional Insights Highlight Pill */}
-                  {diary.localInsights?.recommendedForSolo && (
-                    <div className="bg-amber-50/70 border border-amber-200/60 rounded-xl p-2.5 text-xs text-stone-700">
-                      <div className="flex items-center gap-1.5 text-amber-800 font-bold text-[11px] mb-1">
-                        <Sparkles className="w-3 h-3 text-amber-600" />
-                        <span>{t('detailCourseInfo')}</span>
-                      </div>
-                      <p className="line-clamp-1 text-[11px] text-stone-600">
-                        💡 {diary.localInsights.recommendedForSolo}
-                      </p>
-                    </div>
-                  )}
-
                   {/* Tags */}
                   {diary.moodTags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
@@ -471,35 +466,46 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                         <span>{t('cardViewOnMap')}</span>
                       </button>
 
-                      {/* Admin-only Actions: Edit & Delete */}
-                      {isAdmin && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const original = diaries.find(item => item.id === diary.id) || diary;
-                              onEditDiary(original);
-                            }}
-                            className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
-                            title={t('cardEdit')}
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
+                      {/* Admin-only Actions: Edit & Delete (Allowed only when online & synchronized) */}
+                      {isAdmin && (() => {
+                        const isLocked = isDiaryPendingSync(diary.id) || (typeof navigator !== 'undefined' && !navigator.onLine);
+                        return (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const original = diaries.find(item => item.id === diary.id) || diary;
+                                onEditDiary(original);
+                              }}
+                              className={`p-1.5 rounded transition ${
+                                isLocked 
+                                  ? 'text-stone-300 hover:text-amber-600 hover:bg-stone-50' 
+                                  : 'text-stone-400 hover:text-stone-700 hover:bg-stone-100'
+                              }`}
+                              title={isLocked ? '수정은 서버와 연결되고 동기화가 완료된 상태에서만 가능합니다' : t('cardEdit')}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const original = diaries.find(item => item.id === diary.id) || diary;
-                              onDeleteDiary(original);
-                            }}
-                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
-                            title={t('cardDelete')}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const original = diaries.find(item => item.id === diary.id) || diary;
+                                onDeleteDiary(original);
+                              }}
+                              className={`p-1.5 rounded transition ${
+                                isLocked 
+                                  ? 'text-stone-300 hover:text-rose-500 hover:bg-rose-50' 
+                                  : 'text-stone-400 hover:text-rose-600 hover:bg-rose-50'
+                              }`}
+                              title={isLocked ? '삭제는 서버와 연결되고 동기화가 완료된 상태에서만 가능합니다' : t('cardDelete')}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     <button

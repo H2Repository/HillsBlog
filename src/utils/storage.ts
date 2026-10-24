@@ -52,43 +52,7 @@ export function saveDiaries(diaries: DiaryEntry[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
   } catch (e) {
-    console.warn('Direct localStorage save quota exceeded, trimming cache payload:', e);
-    try {
-      // 1. Fallback: preserve thumbnails or lightweight URLs (< 80KB), omitting large multi-MB base64 strings
-      const leanDiaries = sorted.map((d) => ({
-        ...d,
-        photos: (d.photos || []).map((p) => ({
-          id: p.id,
-          caption: p.caption,
-          timestamp: p.timestamp,
-          isCover: p.isCover,
-          isChunked: p.isChunked,
-          chunkCount: p.chunkCount,
-          thumbnailUrl: p.thumbnailUrl,
-          // Only keep url if it's already a thumbnail or small (< 80KB)
-          url: p.thumbnailUrl || (p.url && p.url.length < 80000 ? p.url : ''),
-        })),
-      }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(leanDiaries));
-    } catch (innerErr) {
-      console.warn('Fallback lean save also exceeded, saving essential feed items:', innerErr);
-      try {
-        // 2. Fallback: Keep most recent 20 diaries
-        const minimal = sorted.slice(0, 20).map((d) => ({
-          ...d,
-          photos: (d.photos || []).filter(p => p.isCover).map((p) => ({
-            id: p.id,
-            caption: p.caption,
-            timestamp: p.timestamp,
-            isCover: true,
-            url: p.thumbnailUrl || '',
-          })),
-        }));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
-      } catch (finalErr) {
-        console.error('All localStorage fallback saves failed:', finalErr);
-      }
-    }
+    console.warn('localStorage quota reached. Full photos and diaries are safely preserved in IndexedDB.', e);
   }
 }
 

@@ -114,8 +114,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center justify-between h-18">
           {/* Logo & Blog Identity */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center shadow-lg shadow-amber-900/30 text-amber-100 shrink-0">
-              <Compass className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-amber-900/30 shrink-0 border border-amber-500/30 bg-stone-800 flex items-center justify-center">
+              <img 
+                src="/icon.png" 
+                alt="App Icon" 
+                className="w-full h-full object-cover" 
+              />
             </div>
             <div>
               <div className="flex items-center gap-2">

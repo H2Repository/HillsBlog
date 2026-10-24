@@ -13,10 +13,9 @@ import {
   Calendar, 
   Camera, 
   Route, 
-  ChevronRight, 
+  ChevronRight,
   Eye, 
   Loader2,
-  Sparkles,
   Users
 } from 'lucide-react';
 
@@ -56,9 +55,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     );
   }, [localizedDiaries]);
 
-  const [activeDiary, setActiveDiary] = useState<DiaryEntry | null>(
-    sortedDiaries.find(d => d.id === selectedDiaryId) || sortedDiaries[0] || null
-  );
   const [isLocating, setIsLocating] = useState(false);
   const [totalDistance, setTotalDistance] = useState(0);
   const [showVisitorMarkers, setShowVisitorMarkers] = useState(false);
@@ -120,16 +116,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     });
   }, [showVisitorMarkers, visitorLogs]);
 
-  // Keep activeDiary in sync with localizedDiaries
-  useEffect(() => {
-    if (activeDiary) {
-      const updated = sortedDiaries.find(d => d.id === activeDiary.id);
-      if (updated) setActiveDiary(updated);
-    } else if (sortedDiaries.length > 0) {
-      setActiveDiary(sortedDiaries[0]);
-    }
-  }, [sortedDiaries]);
-
   // Calculate cumulative distance along chronological trail starting from the 10/23 bicycle shop visit entry
   useEffect(() => {
     const bikeShopIndex = sortedDiaries.findIndex(
@@ -183,6 +169,22 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     }).addTo(map);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // 4. 폰에서 히스토리 지도 클릭시 현재 지도에서 +2 확대
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      const isMobile = 
+        window.innerWidth <= 768 || 
+        ('ontouchstart' in window && window.innerWidth <= 1024) ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+      if (isMobile) {
+        const currentZoom = map.getZoom();
+        const maxZoom = map.getMaxZoom() || 19;
+        const newZoom = Math.min(currentZoom + 2, maxZoom);
+        map.setView(e.latlng, newZoom, { animate: true });
+      }
+    });
+
     mapInstanceRef.current = map;
 
     return () => {
@@ -290,11 +292,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
             onSelectDiary(original);
           };
         }
-        setActiveDiary(diary);
-      });
-
-      marker.on('click', () => {
-        setActiveDiary(diary);
       });
 
       markersRef.current[diary.id] = marker;
@@ -329,7 +326,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     if (!selectedDiaryId || !mapInstanceRef.current) return;
     const diary = diaries.find(d => d.id === selectedDiaryId);
     if (diary) {
-      setActiveDiary(diary);
       mapInstanceRef.current.flyTo([diary.location.lat, diary.location.lng], 13, { duration: 1.2 });
       const marker = markersRef.current[diary.id];
       if (marker) {
@@ -379,17 +375,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
       alert(msg);
     } finally {
       setIsLocating(false);
-    }
-  };
-
-  const handleStopClick = (diary: DiaryEntry) => {
-    setActiveDiary(diary);
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.flyTo([diary.location.lat, diary.location.lng], 13, { duration: 1 });
-      const marker = markersRef.current[diary.id];
-      if (marker) {
-        marker.openPopup();
-      }
     }
   };
 
@@ -468,13 +453,13 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
             <Camera className="w-4 h-4 text-amber-400" />
             <span className="text-stone-400">{t('mapPhotosCount')}:</span>
             <span className="font-bold text-white">
-              {sortedDiaries.reduce((sum, d) => sum + d.photos.length, 0)}
+              {sortedDiaries.reduce((sum, d) => sum + Math.max(d.totalPhotosCount || 0, d.photos?.length || 0), 0)}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Side Travel Log Footprint Itinerary */}
+      {/* Side Travel Log Footprint Itinerary (발자취 경로순서 - 원복, 단 검은색 바탕의 하단 일기 프리뷰는 완전 삭제) */}
       <div className="w-full md:w-88 lg:w-96 h-1/3 md:h-full bg-white border-t md:border-t-0 md:border-l border-stone-200 flex flex-col z-10 shadow-lg">
         <div className="p-4 border-b border-stone-100 bg-stone-50/70 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -494,19 +479,22 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
         {/* Scrollable list of stops */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
           {sortedDiaries.map((diary, index) => {
-            const isSelected = activeDiary?.id === diary.id;
             const coverPhoto = diary.photos.find(p => p.isCover) || diary.photos[0];
             const originalDiary = diaries.find(item => item.id === diary.id) || diary;
 
             return (
               <div
                 key={diary.id}
-                onClick={() => handleStopClick(diary)}
-                className={`p-3 rounded-xl border transition-all cursor-pointer flex gap-3 ${
-                  isSelected
-                    ? 'bg-amber-50/70 border-amber-400 shadow-sm ring-1 ring-amber-400/50'
-                    : 'bg-white border-stone-200 hover:border-stone-300 hover:bg-stone-50/50'
-                }`}
+                onClick={() => {
+                  if (mapInstanceRef.current) {
+                    mapInstanceRef.current.flyTo([diary.location.lat, diary.location.lng], 13, { duration: 1 });
+                    const marker = markersRef.current[diary.id];
+                    if (marker) {
+                      marker.openPopup();
+                    }
+                  }
+                }}
+                className="p-3 rounded-xl border border-stone-200 hover:border-amber-400 bg-white hover:bg-stone-50/50 transition-all cursor-pointer flex gap-3 shadow-2xs"
               >
                 {/* Photo Thumbnail */}
                 <div className="w-16 h-16 rounded-lg overflow-hidden bg-stone-100 shrink-0 border border-stone-200 relative">
@@ -547,7 +535,7 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
                         e.stopPropagation();
                         onSelectDiary(originalDiary);
                       }}
-                      className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 flex items-center"
+                      className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 flex items-center cursor-pointer"
                     >
                       <span>{t('mapRead')}</span>
                       <ChevronRight className="w-3 h-3" />
@@ -558,33 +546,6 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
             );
           })}
         </div>
-
-        {/* Selected Diary Snapshot preview footer */}
-        {activeDiary && (
-          <div className="p-3 bg-stone-900 text-white border-t border-stone-800">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] text-amber-400 font-medium flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                {t('mapSelectedPlace')}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  const original = diaries.find(item => item.id === activeDiary.id) || activeDiary;
-                  onSelectDiary(original);
-                }}
-                className="text-xs font-semibold px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white transition flex items-center gap-1"
-              >
-                <Eye className="w-3 h-3" />
-                <span>{t('mapReadDetail')}</span>
-              </button>
-            </div>
-            <p className="text-xs font-bold truncate text-stone-100">{activeDiary.title}</p>
-            <p className="text-[11px] text-stone-400 truncate">
-              {activeDiary.location.address}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

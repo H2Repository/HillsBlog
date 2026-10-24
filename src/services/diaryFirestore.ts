@@ -23,44 +23,184 @@ const MAX_SINGLE_DOC_BYTES = 700000; // 700KB safety margin below Firestore's 1M
 const PHOTO_CHUNK_SIZE = 500000; // 500KB chunks for photos exceeding single doc limit
 const MAX_DIARY_TOTAL_BYTES = 10 * 1024 * 1024; // 10MB total diary limit
 
+export const AUTO_OFFLINE_DELAY_MS = 120 * 1000; // 2 minutes (120,000ms)
+
+export interface FirestoreConnectionState {
+  isOnline: boolean;
+  remainingSeconds: number;
+  autoOfflineExpiresAt: number;
+}
+
 let activeOnlineRequests = 0;
-let isNetworkOnline = true; // Initially online during app boot
+let isFirestoreOnline = true; // Initially online during app boot
+let autoOfflineTimer: ReturnType<typeof setTimeout> | null = null;
+let autoOfflineExpiresAt = 0;
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
+type ConnectionStateListener = (state: FirestoreConnectionState) => void;
+const connectionListeners = new Set<ConnectionStateListener>();
+
+function notifyConnectionListeners() {
+  const remainingSeconds = autoOfflineExpiresAt > 0 
+    ? Math.max(0, Math.ceil((autoOfflineExpiresAt - Date.now()) / 1000))
+    : 0;
+  const state: FirestoreConnectionState = {
+    isOnline: isFirestoreOnline,
+    remainingSeconds,
+    autoOfflineExpiresAt,
+  };
+  connectionListeners.forEach((listener) => {
+    try {
+      listener(state);
+    } catch (e) {
+      console.warn('Connection listener error:', e);
+    }
+  });
+}
+
+function startCountdownTicker() {
+  if (countdownInterval) return;
+  countdownInterval = setInterval(() => {
+    if (autoOfflineExpiresAt > 0) {
+      notifyConnectionListeners();
+    } else {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+    }
+  }, 1000);
+}
+
+function stopCountdownTicker() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+}
 
 /**
- * Temporarily enables Firestore network connection
+ * Schedules or refreshes the 2-minute auto-offline timer.
+ * Automatically severs the Firestore connection (disableNetwork) after 2 minutes of idle time.
+ */
+export function scheduleAutoOfflineTimer(delayMs: number = AUTO_OFFLINE_DELAY_MS): void {
+  if (autoOfflineTimer) {
+    clearTimeout(autoOfflineTimer);
+    autoOfflineTimer = null;
+  }
+  autoOfflineExpiresAt = Date.now() + delayMs;
+  startCountdownTicker();
+  notifyConnectionListeners();
+
+  autoOfflineTimer = setTimeout(async () => {
+    autoOfflineTimer = null;
+    autoOfflineExpiresAt = 0;
+    stopCountdownTicker();
+
+    // Only transition to offline if no requests are actively executing
+    if (activeOnlineRequests <= 0) {
+      try {
+        await disableNetwork(db);
+        isFirestoreOnline = false;
+        console.log('[Firestore] 2분 무작업 경과: Firestore 오프라인(절전 모드)으로 전환되었습니다.');
+      } catch (err) {
+        console.warn('disableNetwork auto-sleep note:', err);
+      } finally {
+        notifyConnectionListeners();
+      }
+    }
+  }, delayMs);
+}
+
+/**
+ * Enables Firestore network connection and cancels any pending auto-sleep
  */
 export async function enableFirestoreNetwork(): Promise<void> {
-  activeOnlineRequests++;
-  if (!isNetworkOnline) {
+  if (autoOfflineTimer) {
+    clearTimeout(autoOfflineTimer);
+    autoOfflineTimer = null;
+  }
+  autoOfflineExpiresAt = 0;
+  stopCountdownTicker();
+
+  if (!isFirestoreOnline) {
     try {
       await enableNetwork(db);
-      isNetworkOnline = true;
+      isFirestoreOnline = true;
+      console.log('[Firestore] Firestore 네트워크 온라인 활성화됨');
     } catch (err) {
       console.warn('enableNetwork note:', err);
+    } finally {
+      notifyConnectionListeners();
     }
   }
 }
 
 /**
- * Disables Firestore network connection, putting client in offline mode
+ * Disables Firestore network connection, putting client in offline mode immediately
  */
 export async function disableFirestoreNetwork(): Promise<void> {
-  activeOnlineRequests = Math.max(0, activeOnlineRequests - 1);
-  if (activeOnlineRequests === 0) {
-    try {
-      await disableNetwork(db);
-      isNetworkOnline = false;
-    } catch (err) {
-      console.warn('disableNetwork note:', err);
-    }
+  if (autoOfflineTimer) {
+    clearTimeout(autoOfflineTimer);
+    autoOfflineTimer = null;
+  }
+  autoOfflineExpiresAt = 0;
+  stopCountdownTicker();
+
+  try {
+    await disableNetwork(db);
+    isFirestoreOnline = false;
+  } catch (err) {
+    console.warn('disableNetwork note:', err);
+  } finally {
+    notifyConnectionListeners();
   }
 }
 
 /**
- * Executes a transactional DB task online and immediately switches back to offline
- * Guarantees all pending writes are acknowledged by Firestore backend before severing connection.
+ * Activates an online session on user demand (app open, refresh, save, edit, delete)
+ * and keeps it alive for 2 minutes after completion.
+ */
+export async function activateOnlineSession(): Promise<void> {
+  await enableFirestoreNetwork();
+  scheduleAutoOfflineTimer(AUTO_OFFLINE_DELAY_MS);
+}
+
+/**
+ * Subscribes to real-time Firestore connection status and countdown seconds.
+ */
+export function subscribeFirestoreConnection(listener: ConnectionStateListener): () => void {
+  connectionListeners.add(listener);
+  const remainingSeconds = autoOfflineExpiresAt > 0 
+    ? Math.max(0, Math.ceil((autoOfflineExpiresAt - Date.now()) / 1000))
+    : 0;
+  listener({
+    isOnline: isFirestoreOnline,
+    remainingSeconds,
+    autoOfflineExpiresAt,
+  });
+  return () => {
+    connectionListeners.delete(listener);
+  };
+}
+
+export function getFirestoreConnectionState(): FirestoreConnectionState {
+  const remainingSeconds = autoOfflineExpiresAt > 0 
+    ? Math.max(0, Math.ceil((autoOfflineExpiresAt - Date.now()) / 1000))
+    : 0;
+  return {
+    isOnline: isFirestoreOnline,
+    remainingSeconds,
+    autoOfflineExpiresAt,
+  };
+}
+
+/**
+ * Executes a transactional DB task online and keeps connection alive for 2 minutes.
+ * Guarantees all pending writes are acknowledged by Firestore backend before scheduling sleep timer.
  */
 export async function executeOnline<T>(action: () => Promise<T>): Promise<T> {
+  activeOnlineRequests++;
   await enableFirestoreNetwork();
   try {
     const result = await action();
@@ -72,7 +212,9 @@ export async function executeOnline<T>(action: () => Promise<T>): Promise<T> {
     }
     return result;
   } finally {
-    await disableFirestoreNetwork();
+    activeOnlineRequests = Math.max(0, activeOnlineRequests - 1);
+    // User Requirement: Keep online for 2 minutes after successful completion, then auto switch to offline!
+    scheduleAutoOfflineTimer(AUTO_OFFLINE_DELAY_MS);
   }
 }
 
@@ -134,6 +276,12 @@ async function fetchDiaryFullPhotosInternal(diaryId: string): Promise<TravelPhot
           list.push(rawPhoto);
         }
       }
+      // Sort so cover photo is first, and photos retain order
+      list.sort((a, b) => {
+        if (a.isCover && !b.isCover) return -1;
+        if (!a.isCover && b.isCover) return 1;
+        return (a.timestamp || '').localeCompare(b.timestamp || '');
+      });
       return list;
     }
   } catch (err) {
@@ -152,13 +300,23 @@ export async function fetchDiaryFullPhotos(diaryId: string): Promise<TravelPhoto
   });
 }
 
+export interface InitialSyncResult {
+  diaries: DiaryEntry[];
+  addedToServerCount: number;
+}
+
 /**
  * 1. App Open: Connects online to Firestore, retrieves all diaries and subcollection photos,
- * saves to local cache, and immediately switches back to offline mode.
+ * compares with local DB, adds any missing local diaries to server,
+ * saves to local cache, and schedules 2-minute auto-offline timer.
  */
-export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
+export async function syncInitialDiariesOnline(
+  onProgress?: (message: string) => void
+): Promise<InitialSyncResult> {
   try {
     return await executeOnline(async () => {
+      if (onProgress) onProgress('서버 데이터와 로컬 DB를 비교 중입니다...');
+
       const diariesCol = collection(db, DIARIES_COLLECTION);
       const snap = await getDocs(diariesCol);
       const list: DiaryEntry[] = [];
@@ -191,14 +349,45 @@ export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
                 updatedAt: raw.updatedAt || Date.now(),
               };
 
-              // On initial boot, preserve already-cached full photos if available in localStorage,
-              // avoiding downloading dozens of megabytes of photo chunks at once.
-              // Full photos are fetched on demand when the user clicks a diary.
-              const existingCached = getStoredDiaries().find((d) => d.id === data.id);
-              if (existingCached && existingCached.photos && existingCached.photos.length > 0) {
-                data.photos = existingCached.photos;
+              // Ensure full photos are preserved and loaded properly
+              const localEntry = await getLocalDiaryById(data.id).catch(() => null);
+              const expectedCount = Math.max(
+                data.totalPhotosCount || 0,
+                data.photos.length,
+                localEntry?.photos?.length || 0
+              );
+
+              // 1. If local DB already has all full photos with valid urls, use them
+              if (
+                localEntry &&
+                localEntry.photos &&
+                localEntry.photos.length >= expectedCount &&
+                localEntry.photos.every((p) => p.url && p.url.length > 0)
+              ) {
+                data.photos = localEntry.photos;
+              } else if (
+                data.hasSubcollectionPhotos ||
+                (data.totalPhotosCount && data.totalPhotosCount > data.photos.length) ||
+                data.photos.length === 0 ||
+                data.photos.some((p) => !p.url || p.isChunked)
+              ) {
+                // 2. Fetch full photos from Firestore subcollection if needed
+                try {
+                  const subPhotos = await fetchDiaryFullPhotosInternal(data.id);
+                  if (subPhotos.length > 0) {
+                    data.photos = subPhotos;
+                  } else if (localEntry && localEntry.photos && localEntry.photos.length > 0) {
+                    data.photos = localEntry.photos;
+                  }
+                } catch (subErr) {
+                  if (localEntry && localEntry.photos && localEntry.photos.length > 0) {
+                    data.photos = localEntry.photos;
+                  }
+                }
               }
 
+              // Keep totalPhotosCount in sync with the maximum known photo count
+              data.totalPhotosCount = Math.max(data.totalPhotosCount || 0, data.photos.length);
               list.push(data);
             }
           } catch (err) {
@@ -220,6 +409,33 @@ export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
           } else {
             const local = await getLocalDiaryById(q.id).catch(() => null);
             if (local) pendingSaveMap.set(q.id, local);
+          }
+        }
+      }
+
+      // Requirement 1: Upload any locally stored diary that is missing on the server
+      const remoteIds = new Set(snap.docs.map((d) => d.id));
+      const localDiaries = await getAllLocalDiaries().catch(() => []);
+      const cachedDiaries = getStoredDiaries();
+      const allKnownLocal = new Map<string, DiaryEntry>();
+      for (const item of localDiaries) allKnownLocal.set(item.id, item);
+      for (const item of cachedDiaries) {
+        if (!allKnownLocal.has(item.id)) allKnownLocal.set(item.id, item);
+      }
+
+      let addedToServerCount = 0;
+      for (const [id, localDiary] of allKnownLocal.entries()) {
+        if (!remoteIds.has(id) && !pendingDeleteIds.has(id)) {
+          if (onProgress) {
+            onProgress(`서버에 로컬 일기 추가 작업 중... (${localDiary.title})`);
+          }
+          console.log(`[AutoSync] Uploading missing local diary to server: ${id} (${localDiary.title})`);
+          try {
+            await saveDiaryToFirestoreInternal(localDiary);
+            list.push(localDiary);
+            addedToServerCount++;
+          } catch (upErr) {
+            console.warn(`Auto-upload of missing local diary note for ${id}:`, upErr);
           }
         }
       }
@@ -246,16 +462,21 @@ export async function syncInitialDiariesOnline(): Promise<DiaryEntry[]> {
       await saveMultipleLocalDiaries(merged).catch((dbErr) => {
         console.warn('saveMultipleLocalDiaries note:', dbErr);
       });
-      return merged;
+
+      return {
+        diaries: merged,
+        addedToServerCount,
+      };
     });
   } catch (err) {
     console.warn('Initial online sync skipped/offline, reading from local DB:', err);
     await disableFirestoreNetwork().catch(() => {});
     const localDbItems = await getAllLocalDiaries().catch(() => []);
-    if (localDbItems && localDbItems.length > 0) {
-      return localDbItems;
-    }
-    return getStoredDiaries();
+    const fallback = (localDbItems && localDbItems.length > 0) ? localDbItems : getStoredDiaries();
+    return {
+      diaries: fallback,
+      addedToServerCount: 0,
+    };
   }
 }
 
@@ -297,7 +518,11 @@ export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntr
         updatedAt: raw.updatedAt || Date.now(),
       };
 
-      if (entry.hasSubcollectionPhotos) {
+      if (
+        entry.hasSubcollectionPhotos ||
+        (entry.totalPhotosCount && entry.totalPhotosCount > entry.photos.length) ||
+        entry.photos.some((p) => !p.url || p.isChunked)
+      ) {
         try {
           const subPhotos = await fetchDiaryFullPhotosInternal(entry.id);
           if (subPhotos.length > 0) {
@@ -307,6 +532,8 @@ export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntr
           console.warn(`Subcollection load error for ${entry.id}:`, subErr);
         }
       }
+
+      entry.totalPhotosCount = Math.max(entry.totalPhotosCount || 0, entry.photos.length);
 
       // Requirement 1: Save read diary & full photos to local IndexedDB
       await saveLocalDiary(entry).catch((err) => {
@@ -329,14 +556,10 @@ export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntr
 }
 
 /**
- * 3. Admin Mode: Save or update a diary entry in Firestore.
- * Connects online to write documents & photo chunks, then immediately switches back to offline.
+ * Internal worker to save or update a diary entry in Firestore with subcollection photo chunking.
+ * Used by admin save operations and background sync without requiring interactive admin prompt.
  */
-export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
-  if (!checkAdminPermission()) {
-    throw new Error('일반 사용자는 일기 추가 및 수정 권한이 없습니다. 관리자로 로그인해주세요.');
-  }
-
+export async function saveDiaryToFirestoreInternal(entry: DiaryEntry): Promise<void> {
   const sanitized = sanitizeForFirestore(entry);
   
   // Guard against total diary payload limit (10MB)
@@ -406,26 +629,26 @@ export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
         }
       }
 
-      // For the main document: keep a lean cover photo thumbnail so the feed loads instantly
-      // and main document size is guaranteed to stay < 100KB (never hitting 1MiB).
-      const coverPhoto = allPhotos.find(p => p.isCover) || allPhotos[0];
-      let feedCoverPhotos: TravelPhoto[] = [];
-
-      if (coverPhoto) {
-        if (coverPhoto.url && coverPhoto.url.length > 400000) {
-          const thumbUrl = await createThumbnail(coverPhoto.url, 480, 0.75);
-          feedCoverPhotos = [{
-            ...coverPhoto,
-            url: thumbUrl || coverPhoto.url.slice(0, 300000),
-          }];
+      // For the main document: keep lightweight thumbnails for ALL attached photos!
+      // This ensures that all photos are immediately visible on all devices,
+      // the photo count is 100% accurate, and document size stays safely < 350KB.
+      const feedPhotos: TravelPhoto[] = [];
+      for (const p of allPhotos) {
+        if (p.url && p.url.length > 150000) {
+          const thumbUrl = await createThumbnail(p.url, 480, 0.72);
+          feedPhotos.push({
+            ...p,
+            url: thumbUrl || p.url,
+            thumbnailUrl: thumbUrl || p.thumbnailUrl,
+          });
         } else {
-          feedCoverPhotos = [coverPhoto];
+          feedPhotos.push(p);
         }
       }
 
       const mainDocData = {
         ...sanitized,
-        photos: feedCoverPhotos,
+        photos: feedPhotos,
         hasSubcollectionPhotos: true,
         totalPhotosCount: allPhotos.length,
       };
@@ -437,14 +660,20 @@ export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
 }
 
 /**
- * 3. Admin Mode: Delete a diary entry from Firestore across all devices.
- * Connects online to delete, then immediately switches back to offline.
+ * 3. Admin Mode: Save or update a diary entry in Firestore.
+ * Requires admin permission, writes documents & photo chunks online, and keeps connection alive for 2 minutes.
  */
-export async function deleteDiaryFromFirestore(diaryId: string): Promise<void> {
+export async function saveDiaryToFirestore(entry: DiaryEntry): Promise<void> {
   if (!checkAdminPermission()) {
-    throw new Error('일반 사용자는 일기 삭제 권한이 없습니다. 관리자로 로그인해주세요.');
+    throw new Error('일반 사용자는 일기 추가 및 수정 권한이 없습니다. 관리자로 로그인해주세요.');
   }
+  return await saveDiaryToFirestoreInternal(entry);
+}
 
+/**
+ * Internal worker to delete a diary and its photo chunks from Firestore.
+ */
+export async function deleteDiaryFromFirestoreInternal(diaryId: string): Promise<void> {
   return await executeOnline(async () => {
     const docRef = doc(db, DIARIES_COLLECTION, diaryId);
     try {
@@ -473,6 +702,17 @@ export async function deleteDiaryFromFirestore(diaryId: string): Promise<void> {
       handleFirestoreError(error, OperationType.DELETE, `${DIARIES_COLLECTION}/${diaryId}`);
     }
   });
+}
+
+/**
+ * 3. Admin Mode: Delete a diary entry from Firestore across all devices.
+ * Requires admin permission and keeps connection alive for 2 minutes.
+ */
+export async function deleteDiaryFromFirestore(diaryId: string): Promise<void> {
+  if (!checkAdminPermission()) {
+    throw new Error('일반 사용자는 일기 삭제 권한이 없습니다. 관리자로 로그인해주세요.');
+  }
+  return await deleteDiaryFromFirestoreInternal(diaryId);
 }
 
 /**

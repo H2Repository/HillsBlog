@@ -36,13 +36,18 @@ import { useAuth } from './context/AuthContext';
 import { getCachedDiaryTranslation, hasKorean, translateDiaryAsync } from './utils/translationService';
 import { 
   getAllLocalDiaries, 
-  getLocalSyncQueueCount 
+  saveLocalDiary,
+  deleteLocalDiary,
+  getLocalSyncQueueCount,
+  enqueueLocalSyncItem,
+  dequeueLocalSyncItem
 } from './utils/localDb';
 import { 
   saveDiaryOfflineFirst, 
   deleteDiaryOfflineFirst, 
   processSyncQueue, 
-  subscribeSyncStatus 
+  subscribeSyncStatus,
+  isDiaryPendingSync
 } from './utils/syncManager';
 import { 
   Plus, 
@@ -51,7 +56,9 @@ import {
   Download,
   CheckCircle2,
   AlertTriangle,
-  Route
+  Route,
+  CloudOff,
+  Loader2
 } from 'lucide-react';
 
 export default function App() {
@@ -61,7 +68,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('blog');
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'syncing' | 'connected' | 'offline'>('syncing');
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>([]);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
 
@@ -85,6 +92,22 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // When sync transitions from >0 to 0 while online, show 2-second completion message
+  const prevPendingCountRef = useRef(pendingSyncCount);
+  useEffect(() => {
+    if (prevPendingCountRef.current > 0 && pendingSyncCount === 0 && (typeof navigator === 'undefined' || navigator.onLine)) {
+      setToastMessage({
+        text: '동기화 완료: 모든 일기와 사진이 서버에 안전하게 저장되었습니다.',
+        type: 'success',
+      });
+      const timer = setTimeout(() => {
+        setToastMessage((cur) => (cur?.text.includes('동기화 완료') ? null : cur));
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+    prevPendingCountRef.current = pendingSyncCount;
+  }, [pendingSyncCount]);
 
   // Show notice when automatically logged out due to inactivity
   useEffect(() => {
@@ -119,23 +142,36 @@ export default function App() {
     let isMounted = true;
     const runInitialSync = async () => {
       setCloudSyncStatus('syncing');
+      setToastMessage({
+        text: '서버 데이터와 로컬 DB를 비교 중입니다...',
+        type: 'info',
+      });
       try {
-        const freshDiaries = await syncInitialDiariesOnline();
+        const { diaries: freshDiaries, addedToServerCount } = await syncInitialDiariesOnline((msg) => {
+          if (isMounted) {
+            setToastMessage({ text: msg, type: 'info' });
+          }
+        });
         if (isMounted) {
           if (freshDiaries && freshDiaries.length > 0) {
             setDiaries(sortDiariesDescending(freshDiaries));
           }
-          setCloudSyncStatus('offline');
+          setCloudSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
           setToastMessage({
-            text: '서버 데이터 수신 및 로컬 DB 저장 완료 (오프라인 모드)',
+            text: addedToServerCount > 0 
+              ? `추가 완료: ${addedToServerCount}건의 일기가 서버에 추가되었습니다.` 
+              : '추가 완료: 서버와 로컬 DB가 최신 상태로 동기화되었습니다.',
             type: 'success',
           });
-          setTimeout(() => setToastMessage(null), 3500);
+          setTimeout(() => {
+            if (isMounted) setToastMessage(null);
+          }, 2000);
         }
       } catch (err) {
         console.warn('Initial online sync error:', err);
         if (isMounted) {
           setCloudSyncStatus('offline');
+          setToastMessage(null);
         }
       }
     };
@@ -151,63 +187,88 @@ export default function App() {
   const handleTriggerSync = async () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setToastMessage({
-        text: '현재 오프라인 상태입니다. 인터넷에 연결되면 중단된 지점부터 이어서 재시도됩니다.',
+        text: '현재 오프라인 상태입니다. 인터넷에 연결되면 자동 동기화됩니다.',
         type: 'error',
       });
-      setTimeout(() => setToastMessage(null), 3500);
+      setTimeout(() => setToastMessage(null), 2000);
       return;
     }
 
     if (pendingSyncCount === 0) {
       setToastMessage({
-        text: '모든 로컬 일기와 사진이 서버에 안전하게 업로드되어 있습니다.',
+        text: '모든 데이터가 서버와 이미 동기화되어 있습니다.',
         type: 'success',
       });
-      setTimeout(() => setToastMessage(null), 2500);
+      setTimeout(() => setToastMessage(null), 2000);
       return;
     }
 
     setCloudSyncStatus('syncing');
     setToastMessage({
-      text: `백그라운드 업로드 큐 처리 중 (${pendingSyncCount}건 대기)...`,
-      type: 'success',
+      text: `오프라인 변경사항 서버 동기화 작업 중... (${pendingSyncCount}건 대기)`,
+      type: 'info',
     });
 
     const { successCount, failedCount } = await processSyncQueue();
     if (successCount > 0) {
       setCloudSyncStatus('connected');
       setToastMessage({
-        text: `동기화 완료: ${successCount}건이 서버에 성공적으로 업로드되었습니다.`,
+        text: `동기화 완료: ${successCount}건이 서버에 정상 저장되었습니다.`,
         type: 'success',
       });
-      setTimeout(() => setToastMessage(null), 3500);
+      setTimeout(() => setToastMessage(null), 2000);
     } else if (failedCount > 0) {
       setCloudSyncStatus('offline');
       setToastMessage({
-        text: '업로드 재시도 대기: 네트워크 연결 안정화 시 중단된 지점부터 자동 재시도됩니다.',
+        text: '동기화 중 오류가 발생했습니다. 잠시 후 자동 재시도됩니다.',
         type: 'error',
       });
-      setTimeout(() => setToastMessage(null), 4000);
+      setTimeout(() => setToastMessage(null), 2000);
     }
   };
 
-  // Toast notifications on network status changes
+  // Toast notifications and auto-sync on network status changes
   useEffect(() => {
-    const handleOnline = () => {
-      setToastMessage({
-        text: '네트워크 연결됨: 백그라운드 업로드 큐가 자동으로 재개됩니다.',
-        type: 'success',
-      });
-      setTimeout(() => setToastMessage(null), 3500);
+    const handleOnline = async () => {
+      setCloudSyncStatus('connected');
+      const queueCount = await getLocalSyncQueueCount().catch(() => 0);
+      if (queueCount > 0) {
+        setCloudSyncStatus('syncing');
+        setToastMessage({
+          text: `네트워크 연결됨: 오프라인 변경사항 동기화 작업 중... (${queueCount}건)`,
+          type: 'info',
+        });
+        try {
+          const { successCount } = await processSyncQueue();
+          if (successCount > 0) {
+            setCloudSyncStatus('connected');
+            setToastMessage({
+              text: `동기화 완료: ${successCount}건의 오프라인 변경사항이 서버에 저장되었습니다.`,
+              type: 'success',
+            });
+            setTimeout(() => setToastMessage(null), 2000);
+          } else {
+            setToastMessage(null);
+          }
+        } catch (syncErr) {
+          console.warn('Process sync queue on online error:', syncErr);
+        }
+      } else {
+        setToastMessage({
+          text: '네트워크 연결됨: 서버와 정상 연결되었습니다.',
+          type: 'success',
+        });
+        setTimeout(() => setToastMessage(null), 2000);
+      }
     };
 
     const handleOffline = () => {
       setCloudSyncStatus('offline');
       setToastMessage({
-        text: '오프라인 모드: 작성/수정/삭제한 내용은 로컬 DB에 안전하게 보관되며 온라인 시 자동 동기화됩니다.',
-        type: 'error',
+        text: '오프라인 모드: 수정 및 삭제는 로컬에 기록되며 온라인 연결 시 서버에 동기화됩니다.',
+        type: 'info',
       });
-      setTimeout(() => setToastMessage(null), 4500);
+      setTimeout(() => setToastMessage(null), 2500);
     };
 
     window.addEventListener('online', handleOnline);
@@ -219,46 +280,6 @@ export default function App() {
     };
   }, []);
 
-  // Check and optimize existing diary photos if needed (3MB limit check)
-  const hasOptimizedExistingPhotosRef = useRef(false);
-  useEffect(() => {
-    if (diaries.length === 0 || hasOptimizedExistingPhotosRef.current) return;
-
-    let isMounted = true;
-    const runCheck = async () => {
-      try {
-        const { updatedDiaries, totalOptimized, modifiedDiariesCount } = await optimizeAllDiaries(diaries);
-        if (!isMounted) return;
-
-        if (modifiedDiariesCount > 0) {
-          hasOptimizedExistingPhotosRef.current = true;
-          setDiaries(updatedDiaries);
-          saveDiaries(updatedDiaries);
-
-          // Update each modified diary in Firestore
-          for (const diary of updatedDiaries) {
-            updateOptimizedDiaryToFirestore(diary).catch(console.warn);
-          }
-
-          setToastMessage({
-            text: `사진 ${totalOptimized}장 3MB 이내 최적화 및 동기화 완료`,
-            type: 'success',
-          });
-          setTimeout(() => setToastMessage(null), 4000);
-        } else {
-          hasOptimizedExistingPhotosRef.current = true;
-        }
-      } catch (err) {
-        console.warn('Existing photos optimization note:', err);
-      }
-    };
-
-    runCheck();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [diaries]);
   
   // Modals state
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -325,40 +346,60 @@ export default function App() {
       return;
     }
 
-    // 1. Optimistic update in UI and local storage (strictly newest first)
-    setDiaries((prev) => {
-      const exists = prev.some((d) => d.id === entry.id);
-      const updated = exists ? prev.map((d) => (d.id === entry.id ? entry : d)) : [entry, ...prev];
-      return sortDiariesDescending(updated);
-    });
+    const isExisting = diaries.some((d) => d.id === entry.id);
 
-    // If currently viewing detail, update it
+    // 1. Immediately update in-memory state so UI updates instantly
+    setDiaries((prev) => sortDiariesDescending([entry, ...prev.filter((d) => d.id !== entry.id)]));
     if (selectedDiary && selectedDiary.id === entry.id) {
       setSelectedDiary(entry);
     }
 
-    // 2. Offline-First: Write immediately to high-capacity Local IndexedDB & Enqueue background server upload
+    // 2. Always record to local DB and offline sync queue log
     try {
-      await saveDiaryOfflineFirst(entry);
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        setToastMessage({
-          text: '로컬 DB 저장 완료: 인터넷 연결 시 사진과 일기가 서버로 자동 백그라운드 업로드됩니다.',
-          type: 'success',
-        });
-      } else {
-        setToastMessage({
-          text: '로컬 DB 저장 완료 및 서버 업로드 큐 등록 완료',
-          type: 'success',
-        });
-      }
-      setTimeout(() => setToastMessage(null), 3500);
-    } catch (err: unknown) {
-      console.error('saveDiaryOfflineFirst error:', err);
+      await saveLocalDiary(entry);
+      await enqueueLocalSyncItem('save', entry.id, entry);
+      setPendingSyncCount(await getLocalSyncQueueCount());
+    } catch (dbErr) {
+      console.warn('Local save error:', dbErr);
+    }
+
+    // 3. If online, perform save/update directly on the server
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      setCloudSyncStatus('syncing');
       setToastMessage({
-        text: '로컬 DB 저장 중 오류가 발생했습니다.',
-        type: 'error',
+        text: isExisting ? '서버에 수정 작업 진행 중...' : '서버에 추가 작업 진행 중...',
+        type: 'info',
       });
-      setTimeout(() => setToastMessage(null), 4000);
+
+      try {
+        await saveDiaryToFirestore(entry);
+        await dequeueLocalSyncItem(entry.id);
+        setPendingSyncCount(await getLocalSyncQueueCount());
+        setCloudSyncStatus('connected');
+        setToastMessage({
+          text: isExisting ? '추가 완료: 수정 사항이 서버에 정상 반영되었습니다.' : '추가 완료: 새 일기가 서버에 정상 등록되었습니다.',
+          type: 'success',
+        });
+        setTimeout(() => setToastMessage(null), 2000);
+      } catch (err: unknown) {
+        console.warn('Server save error, retained in sync queue:', err);
+        setCloudSyncStatus('offline');
+        setToastMessage({
+          text: '오프라인 기록 완료: 일기가 로컬에 저장되었으며 온라인 연결 시 서버에 동기화됩니다.',
+          type: 'info',
+        });
+        setTimeout(() => setToastMessage(null), 2000);
+      }
+    } else {
+      // Offline mode: Logged and ready for sync when online
+      setCloudSyncStatus('offline');
+      setToastMessage({
+        text: isExisting 
+          ? '오프라인 수정 기록 완료: 인터넷 연결 시 서버와 동기화됩니다.' 
+          : '오프라인 추가 기록 완료: 인터넷 연결 시 서버와 동기화됩니다.',
+        type: 'info',
+      });
+      setTimeout(() => setToastMessage(null), 2000);
     }
   };
 
@@ -375,6 +416,7 @@ export default function App() {
       openLoginModal('일기 삭제는 관리자만 가능합니다. 로그인해주세요.');
       return;
     }
+    // Deletion allowed offline and online!
     setDeleteTarget(diary);
   };
 
@@ -384,34 +426,56 @@ export default function App() {
       setDeleteTarget(null);
       return;
     }
-    if (deleteTarget) {
-      const targetId = deleteTarget.id;
-      handleDeleteDiary(targetId);
-      setDeleteTarget(null);
+    if (!deleteTarget) return;
 
-      // Offline-First: Delete from Local IndexedDB & Enqueue deletion in background retry queue
+    const targetId = deleteTarget.id;
+    setDeleteTarget(null);
+
+    // 1. Immediately remove from UI and local IndexedDB
+    handleDeleteDiary(targetId);
+    try {
+      await deleteLocalDiary(targetId);
+      await enqueueLocalSyncItem('delete', targetId);
+      setPendingSyncCount(await getLocalSyncQueueCount());
+    } catch (dbErr) {
+      console.warn('Local delete error:', dbErr);
+    }
+
+    // 2. If online, delete directly on server
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      setCloudSyncStatus('syncing');
+      setToastMessage({
+        text: '서버에 삭제 작업 진행 중...',
+        type: 'info',
+      });
+
       try {
-        await deleteDiaryOfflineFirst(targetId);
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          setToastMessage({
-            text: '로컬 DB 삭제 완료: 인터넷 연결 시 서버에서도 자동 삭제됩니다.',
-            type: 'success',
-          });
-        } else {
-          setToastMessage({
-            text: '삭제 완료: 로컬 DB 반영 및 서버 동기화 완료',
-            type: 'success',
-          });
-        }
-        setTimeout(() => setToastMessage(null), 3000);
-      } catch (err: unknown) {
-        console.error('deleteDiaryOfflineFirst error:', err);
+        await deleteDiaryFromFirestore(targetId);
+        await dequeueLocalSyncItem(targetId);
+        setPendingSyncCount(await getLocalSyncQueueCount());
+        setCloudSyncStatus('connected');
         setToastMessage({
-          text: '삭제 처리 중 오류가 발생했습니다.',
-          type: 'error',
+          text: '삭제 완료: 서버와 로컬 DB에서 안전하게 삭제되었습니다.',
+          type: 'success',
         });
-        setTimeout(() => setToastMessage(null), 4000);
+        setTimeout(() => setToastMessage(null), 2000);
+      } catch (err: unknown) {
+        console.warn('Server delete error, retained in sync queue:', err);
+        setCloudSyncStatus('offline');
+        setToastMessage({
+          text: '오프라인 삭제 기록 완료: 네트워크 연결 시 서버에서 삭제됩니다.',
+          type: 'info',
+        });
+        setTimeout(() => setToastMessage(null), 2000);
       }
+    } else {
+      // Offline mode
+      setCloudSyncStatus('offline');
+      setToastMessage({
+        text: '오프라인 삭제 기록 완료: 인터넷 연결 시 서버와 동기화됩니다.',
+        type: 'info',
+      });
+      setTimeout(() => setToastMessage(null), 2000);
     }
   };
 
@@ -475,17 +539,19 @@ export default function App() {
     }
   };
 
-  // Handler: Open edit modal with full photos loaded if in subcollection
+  // Handler: Open edit modal with full photos loaded if in subcollection (supports offline)
   const handleOpenEditDiary = async (d: DiaryEntry) => {
     let target = d;
-    if (d.hasSubcollectionPhotos) {
-      try {
-        const fullPhotos = await fetchDiaryFullPhotos(d.id);
-        if (fullPhotos.length > 0) {
-          target = { ...target, photos: fullPhotos };
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      if (d.hasSubcollectionPhotos || (d.totalPhotosCount && d.totalPhotosCount > d.photos.length)) {
+        try {
+          const fullPhotos = await fetchDiaryFullPhotos(d.id);
+          if (fullPhotos.length > 0) {
+            target = { ...target, photos: fullPhotos };
+          }
+        } catch (err) {
+          console.warn('Could not fetch full photos for edit:', err);
         }
-      } catch (err) {
-        console.warn('Could not fetch full photos for edit:', err);
       }
     }
     setEditingDiary(target);
@@ -592,9 +658,36 @@ export default function App() {
         onOpenVisitorModal={() => setIsVisitorModalOpen(true)}
         cloudSyncStatus={cloudSyncStatus}
         pendingSyncCount={pendingSyncCount}
-        onTriggerSync={handleTriggerSync}
-        onOpenFlutterCode={() => setIsFlutterCodeOpen(true)}
       />
+
+      {/* Top Persistent Warning Badge when unsynced items are pending: prevents users from accidentally clearing browser cache */}
+      {pendingSyncCount > 0 && (
+        <aside
+          role="status"
+          aria-live="polite"
+          className="bg-amber-950/95 border-b border-amber-600/50 text-amber-200 px-4 py-2 text-xs shadow-md sticky top-18 z-30 backdrop-blur-md"
+        >
+          <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 font-bold bg-amber-500/25 px-2.5 py-0.5 rounded-full border border-amber-500/50 text-amber-300 animate-pulse text-[11px]">
+                <CloudOff className="w-3.5 h-3.5 text-amber-400" />
+                동기화 대기 중: {pendingSyncCount}개
+              </span>
+              <span className="text-[11px] text-amber-200/90 hidden sm:inline">
+                오프라인 저장 완료: 인터넷 연결 시 클라우드에 자동 저장됩니다. 브라우저 캐시를 지우지 마세요.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleTriggerSync}
+              className="text-[11px] font-bold text-amber-300 hover:text-white underline underline-offset-2 transition cursor-pointer shrink-0"
+              title="인터넷 연결 상태에서 즉시 동기화"
+            >
+              지금 동기화 시도
+            </button>
+          </div>
+        </aside>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -746,19 +839,25 @@ export default function App() {
         />
       )}
 
-      {/* Cloud Sync Toast Notification */}
+      {/* Cloud Sync Top Notification */}
       {toastMessage && (
-        <div className={`fixed top-18 right-6 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-2xl border flex items-center gap-2 backdrop-blur-md animate-in fade-in slide-in-from-top-3 duration-200 ${
+        <div className={`fixed top-18 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-2xl border flex items-center gap-2 backdrop-blur-md animate-in fade-in slide-in-from-top-3 duration-200 max-w-[90vw] ${
           toastMessage.type === 'success' 
             ? 'bg-stone-900/95 text-emerald-300 border-emerald-800/60' 
+            : toastMessage.type === 'info'
+            ? 'bg-stone-900/95 text-amber-300 border-amber-600/60'
             : 'bg-rose-950/95 text-rose-200 border-rose-800/80'
         }`}>
-          {toastMessage.type === 'success' ? (
+          {toastMessage.type === 'success' && (
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          ) : (
+          )}
+          {toastMessage.type === 'info' && (
+            <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+          )}
+          {toastMessage.type === 'error' && (
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
           )}
-          <span>{toastMessage.text}</span>
+          <span className="truncate">{toastMessage.text}</span>
         </div>
       )}
 

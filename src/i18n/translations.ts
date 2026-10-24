@@ -21,7 +21,7 @@ export const translations = {
     // App Header
     appTitle: "Hill's Blog",
     appBadge: 'Travel Travel',
-    appSubtitle: '실시간 위치 & 사진으로 기록하는 여행 여행 발자취',
+    appSubtitle: '실시간 위치 & 여행 사진',
     
     // GPS & Nav
     gpsCheck: '실시간 내 위치 확인',
