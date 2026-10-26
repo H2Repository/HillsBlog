@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDiary(data) {
+      return data.id is string 
+        && isValidId(data.id)
+        && data.title is string && data.title.size() <= 1000
+        && data.content is string && data.content.size() <= 100000
+        && data.date is string && data.date.size() <= 50
+        && data.time is string && data.time.size() <= 50
+        && data.location is map
+        && data.rating is number && data.rating >= 0 && data.rating <= 5
+        && (!('views' in data) || (data.views is number && data.views >= 0));
+    }
+
+    // Connection health check document
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Hill's Blog travel diaries collection
+    match /diaries/{diaryId} {
+      allow read: if true;
+      allow create, update: if isValidId(diaryId) && isValidDiary(request.resource.data) && request.resource.data.id == diaryId;
+      allow delete: if isValidId(diaryId);
+
+      // Attached photos subcollection (allows up to 3MB+ attached photos with chunking)
+      match /photos/{photoId} {
+        allow read, write, delete: if isValidId(diaryId);
+
+        match /chunks/{chunkId} {
+          allow read, write, delete: if isValidId(diaryId);
+        }
+      }
+    }
+
+    // Visitor location logs for administrator analytics
+    match /visitor_logs/{logId} {
+      allow read, delete: if true;
+      allow create: if isValidId(logId) && request.resource.data.id == logId && request.resource.data.timestamp is number;
+      allow update: if false;
+    }
+  }
+}
