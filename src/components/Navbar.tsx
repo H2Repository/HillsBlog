@@ -10,6 +10,7 @@ import {
   Navigation,
   Loader2,
   Cloud,
+  CloudOff,
   Lock,
   LogOut,
   ShieldCheck,
@@ -133,8 +134,47 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Language Selector */}
-          <div className="flex items-center gap-2">
+          {/* Cloud Sync Status & Language Selector */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Sync Status Badge (Responsive) */}
+            <div 
+              className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-full border transition-all duration-300 ${
+                cloudSyncStatus === 'syncing' 
+                  ? 'bg-amber-950/30 border-amber-500/40 text-amber-300 shadow-sm shadow-amber-900/20' 
+                  : cloudSyncStatus === 'offline'
+                  ? 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+                  : 'bg-stone-800/80 border-stone-700/80 text-emerald-400'
+              }`}
+              title={
+                cloudSyncStatus === 'syncing' ? '서버와 데이터를 동기화하는 중입니다...' :
+                cloudSyncStatus === 'offline' ? '현재 오프라인 상태입니다. 작업 내용은 로컬에 저장됩니다.' :
+                '서버와 정상적으로 연결되었습니다.'
+              }
+            >
+              {cloudSyncStatus === 'syncing' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : cloudSyncStatus === 'offline' ? (
+                <CloudOff className="w-3.5 h-3.5" />
+              ) : (
+                <Cloud className="w-3.5 h-3.5" />
+              )}
+              
+              <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-tight">
+                {pendingSyncCount > 0 ? (
+                  <span className="flex items-center gap-1">
+                    <span className="hidden lg:inline text-amber-400">대기</span>
+                    <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-stone-900 shadow-xs">
+                      {pendingSyncCount}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="hidden md:inline">
+                    {cloudSyncStatus === 'syncing' ? 'Sync' : cloudSyncStatus === 'offline' ? 'Off' : 'On'}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <LanguageSelector />
           </div>
 

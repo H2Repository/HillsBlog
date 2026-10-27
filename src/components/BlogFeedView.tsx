@@ -30,6 +30,7 @@ import {
   ArrowUpNarrowWide,
   RotateCcw
 } from 'lucide-react';
+import { calculateDistanceKm } from '../utils/geo';
 import { useAuth } from '../context/AuthContext';
 import { isDiaryPendingSync } from '../utils/syncManager';
 
@@ -91,9 +92,40 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
     return ['ALL', ...Array.from(set)];
   }, [localizedDiaries]);
 
-  // Total visitor reads count across all diaries
   const totalViews = useMemo(() => {
     return diaries.reduce((acc, d) => acc + (d.views || 0), 0);
+  }, [diaries]);
+
+  // Pre-calculate distance difference from the previous diary in chronological order
+  const distanceDiffs = useMemo(() => {
+    const sorted = [...diaries].sort(
+      (a, b) => new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime()
+    );
+
+    const diffMap: Record<string, number | null> = {};
+    for (let i = 0; i < sorted.length; i++) {
+      const current = sorted[i];
+      if (i === 0) {
+        diffMap[current.id] = null;
+        continue;
+      }
+      const prev = sorted[i - 1];
+      if (
+        current.location && prev.location &&
+        typeof current.location.lat === 'number' && typeof prev.location.lat === 'number'
+      ) {
+        const dist = calculateDistanceKm(
+          prev.location.lat,
+          prev.location.lng,
+          current.location.lat,
+          current.location.lng
+        );
+        diffMap[current.id] = dist;
+      } else {
+        diffMap[current.id] = null;
+      }
+    }
+    return diffMap;
   }, [diaries]);
 
   // Filter & sort diaries (strictly newest travel date/time first by default)
@@ -394,6 +426,20 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
                             >
                               <Eye className="w-3.5 h-3.5 text-amber-600" />
                               <span>{(diary.views || 0).toLocaleString()}</span>
+                            </span>
+                          </>
+                        )}
+                        
+                        {/* Distance from Previous Diary (Requirement: Displayed to the right of visitors) */}
+                        {distanceDiffs[diary.id] !== null && distanceDiffs[diary.id]! > 0 && (
+                          <>
+                            <span>•</span>
+                            <span 
+                              className="flex items-center gap-1 text-stone-600 font-medium bg-stone-100 px-2 py-0.5 rounded-full"
+                              title={`이전 일기 위치로부터 ${distanceDiffs[diary.id]}km 이동`}
+                            >
+                              <Compass className="w-3.5 h-3.5 text-sky-600" />
+                              <span>{distanceDiffs[diary.id]}km</span>
                             </span>
                           </>
                         )}
