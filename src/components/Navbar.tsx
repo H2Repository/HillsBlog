@@ -10,7 +10,6 @@ import {
   Navigation,
   Loader2,
   Cloud,
-  CloudOff,
   Lock,
   LogOut,
   ShieldCheck,
@@ -111,12 +110,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-stone-900/95 text-stone-100 backdrop-blur-md border-b border-stone-800 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Top Bar: Logo, Language, Actions */}
         <div className="flex items-center justify-between h-18">
           {/* Logo & Blog Identity */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-amber-900/30 shrink-0 border border-amber-500/30 bg-stone-800 flex items-center justify-center">
               <img 
-                src="/icon.png" 
+                src="/hillsblog/assets/icon.png" 
                 alt="App Icon" 
                 className="w-full h-full object-cover" 
               />
@@ -133,40 +133,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Real-time GPS Tracker & Language Selector */}
+          {/* Language Selector */}
           <div className="flex items-center gap-2">
-            {/* GPS Tracker (shown on md and up) */}
-            <div className="hidden md:flex items-center gap-2">
-              {currentGpsInfo ? (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-xs text-emerald-300 shadow-inner">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                </div>
-              ) : (
-                <button
-                  id="btn-fetch-current-gps"
-                  type="button"
-                  onClick={handleFetchCurrentGps}
-                  disabled={gpsLoading}
-                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-stone-800 hover:bg-stone-700/80 border border-stone-700 text-xs text-stone-300 hover:text-white transition-all duration-200 active:scale-95"
-                  title={t('gpsCheck')}
-                >
-                  {gpsLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                  ) : (
-                    <Navigation className="w-3.5 h-3.5 text-amber-400" />
-                  )}
-                </button>
-              )}
-
-              {gpsError && (
-                <span className="text-xs text-rose-400 bg-rose-950/60 px-2 py-1 rounded border border-rose-800">
-                  {gpsError}
-                </span>
-              )}
-            </div>
-
-            {/* Language Selector */}
             <LanguageSelector />
           </div>
 
@@ -303,6 +271,49 @@ export const Navbar: React.FC<NavbarProps> = ({
                           <span>관리자 로그온</span>
                         </button>
                       </div>
+                    )}
+                  </div>
+
+                  {/* 1.5. 실시간 내 위치 확인 (새로 이동됨) */}
+                  <div className="p-3 rounded-xl bg-stone-800/60 border border-stone-700/60 mb-2.5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                        실시간 내 위치 확인
+                      </span>
+                    </div>
+                    {currentGpsInfo ? (
+                      <div className="flex items-center gap-2.5 p-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-emerald-300 font-bold truncate">{currentGpsInfo.region}</p>
+                          <p className="text-[10px] text-emerald-400/80 truncate">{currentGpsInfo.address}</p>
+                        </div>
+                        <button 
+                          onClick={handleFetchCurrentGps}
+                          disabled={gpsLoading}
+                          className="ml-auto p-1.5 rounded-lg bg-emerald-900/50 hover:bg-emerald-800 text-emerald-400 transition"
+                        >
+                          {gpsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleFetchCurrentGps}
+                        disabled={gpsLoading}
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-stone-700 hover:bg-stone-600 text-white text-xs font-bold transition disabled:opacity-50"
+                      >
+                        {gpsLoading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                        ) : (
+                          <Navigation className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        <span>{gpsLoading ? '위치 확인 중...' : '현재 위치 확인하기'}</span>
+                      </button>
+                    )}
+                    {gpsError && (
+                      <p className="text-[10px] text-rose-400 mt-1.5 px-1">{gpsError}</p>
                     )}
                   </div>
 
@@ -474,6 +485,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>{t('tabMap')}</span>
             </button>
 
+            {/* Server Diary Count Label (Requirement) */}
+            <div className="flex items-center gap-2 ml-2 sm:ml-4 px-2.5 py-1 rounded-lg bg-stone-800/40 border border-stone-700/40 text-xs">
+              <span className="text-stone-400">서버 일기 갯수 :</span>
+              <span className="text-amber-400 font-bold font-mono">{totalDiariesCount}</span>
+            </div>
+
             {/* Total Visitor Reads & Location Indicator (Admin Only) */}
             {isAdmin && (
               <button
@@ -496,16 +513,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </nav>
 
-          {/* Mobile GPS Trigger button */}
+          {/* Mobile GPS Tracker indicator (compact) */}
           <div className="md:hidden flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleFetchCurrentGps}
-              disabled={gpsLoading}
-              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-stone-800 text-amber-400 border border-stone-700"
-            >
-              {gpsLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Navigation className="w-3 h-3" />}
-            </button>
+            {/* Mobile GPS trigger moved to menu */}
           </div>
         </div>
       </div>

@@ -428,19 +428,8 @@ export interface InitialSyncResult {
 export async function syncInitialDiariesOnline(
   onProgress?: (message: string) => void
 ): Promise<InitialSyncResult> {
-  // Requirement: If admin is logged out, stop synchronization and refresh immediately!
-  if (!checkAdminPermission()) {
-    const local = await getAllLocalDiaries().catch(() => []);
-    const fallback = local.length > 0 ? local : getStoredDiaries();
-    return {
-      diaries: sortDiariesDescending(fallback),
-      addedToServerCount: 0,
-      serverAddedCount: 0,
-      serverUpdatedCount: 0,
-      serverDeletedCount: 0,
-      changeLogs: [],
-    };
-  }
+  // Pulling server data for everyone; upload/delete logic is guarded by isAdminUser below
+  const isAdminUser = checkAdminPermission();
 
   try {
     return await executeOnline(async () => {
@@ -588,7 +577,7 @@ export async function syncInitialDiariesOnline(
         }
       }
 
-      const isAdminUser = checkAdminPermission();
+
       const changeLogs: ServerChangeLog[] = [];
       let addedToServerCount = 0;
       let serverAddedCount = 0;

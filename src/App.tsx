@@ -157,16 +157,13 @@ export default function App() {
     // 1-2. Connect online to server, retrieve fresh data, save to local DB, and switch back to offline
     let isMounted = true;
     const runInitialSync = async () => {
-      // Stop all synchronization and online refresh when admin is not logged in
-      if (!isAdmin) {
-        setCloudSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
-        return;
-      }
       setCloudSyncStatus('syncing');
-      setToastMessage({
-        text: '서버 데이터와 로컬 DB를 비교 중입니다...',
-        type: 'info',
-      });
+      if (isAdmin) {
+        setToastMessage({
+          text: '서버 데이터와 로컬 DB를 비교 중입니다...',
+          type: 'info',
+        });
+      }
       try {
         if (isAdmin) {
           await cleanAndHealSyncQueue();
