@@ -231,6 +231,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                             관리자
                           </span>
                         </div>
+                        
+                        {/* Server Diary Count (Requirement: Moved here) */}
+                        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-stone-900/50 border border-stone-700/50 text-[11px]">
+                          <span className="text-stone-400">서버 저장 일기 갯수</span>
+                          <span className="text-amber-400 font-bold font-mono">{totalDiariesCount}개</span>
+                        </div>
+
                         <button
                           id="btn-menu-logout"
                           type="button"
@@ -485,11 +492,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>{t('tabMap')}</span>
             </button>
 
-            {/* Server Diary Count Label (Requirement) */}
-            <div className="flex items-center gap-2 ml-2 sm:ml-4 px-2.5 py-1 rounded-lg bg-stone-800/40 border border-stone-700/40 text-xs">
-              <span className="text-stone-400">서버 일기 :</span>
-              <span className="text-amber-400 font-bold font-mono">{totalDiariesCount}</span>
-            </div>
+
 
             {/* Total Visitor Reads & Location Indicator (Admin Only) */}
             {isAdmin && (
