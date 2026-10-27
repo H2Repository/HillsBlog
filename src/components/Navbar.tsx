@@ -487,7 +487,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Server Diary Count Label (Requirement) */}
             <div className="flex items-center gap-2 ml-2 sm:ml-4 px-2.5 py-1 rounded-lg bg-stone-800/40 border border-stone-700/40 text-xs">
-              <span className="text-stone-400">서버 일기 갯수 :</span>
+              <span className="text-stone-400">서버 일기 :</span>
               <span className="text-amber-400 font-bold font-mono">{totalDiariesCount}</span>
             </div>
 
