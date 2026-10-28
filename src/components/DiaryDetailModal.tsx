@@ -228,22 +228,22 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-      <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+      <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden my-auto max-h-[95dvh] flex flex-col">
         {/* Header bar */}
-        <div className="px-6 py-3.5 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800">
-          <div className="flex items-center gap-2">
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30">
+        <div className="px-3 sm:px-6 py-2.5 sm:py-3.5 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800 gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+            <span className="text-xs px-2 sm:px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30 truncate max-w-[120px] sm:max-w-none">
               {displayDiary.location.region}
             </span>
-            <span className="text-xs text-stone-400">
-              {displayDiary.date} {displayDiary.time}
+            <span className="text-[11px] sm:text-xs text-stone-400">
+              {displayDiary.date} <span className="hidden xs:inline">{displayDiary.time}</span>
             </span>
 
             {/* Visitor Read Count Badge in Modal Header (Admin Only) */}
             {isAdmin && (
               <span 
-                className="flex items-center gap-1.5 text-xs text-stone-300 bg-stone-800/90 border border-stone-700/80 px-2.5 py-0.5 rounded-full font-medium"
+                className="flex items-center gap-1 text-[11px] sm:text-xs text-stone-300 bg-stone-800/90 border border-stone-700/80 px-2 sm:px-2.5 py-0.5 rounded-full font-medium"
                 title={t('diaryReadersCount', { count: (displayDiary.views || 0).toLocaleString() })}
               >
                 <Eye className="w-3.5 h-3.5 text-amber-400" />
@@ -268,7 +268,7 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {language !== 'ko' && (
               <button
                 type="button"

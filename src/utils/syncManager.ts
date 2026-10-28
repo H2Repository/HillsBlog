@@ -15,7 +15,11 @@ import {
   deleteDiaryFromFirestoreInternal, 
   activateOnlineSession,
   normalizeDiaryEntryForFirestore,
-  checkAdminPermission
+  checkAdminPermission,
+  isQuotaExceededError,
+  isServerQuotaExceeded,
+  setServerQuotaExceeded,
+  disableFirestoreNetwork
 } from '../services/diaryFirestore';
 
 export interface SyncStatus {
@@ -117,6 +121,13 @@ export async function processSyncQueue(
     return { successCount: 0, failedCount: 0 };
   }
 
+  if (isServerQuotaExceeded()) {
+    currentStatus.isSyncing = false;
+    currentStatus.lastError = 'Quota limit exceeded: 서버 할당량이 초과되어 안전한 오프라인 모드로 유지됩니다.';
+    notifySyncListeners();
+    return { successCount: 0, failedCount: 0 };
+  }
+
   const queue = await getLocalSyncQueue();
   const actionableItems = queue.filter((item) => item.status !== 'completed');
 
@@ -150,6 +161,11 @@ export async function processSyncQueue(
       // Check network connectivity before each attempt
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         currentStatus.lastError = '오프라인 상태입니다. 네트워크 연결 시 자동으로 재개됩니다.';
+        break;
+      }
+
+      if (isServerQuotaExceeded()) {
+        currentStatus.lastError = 'Quota limit exceeded: 서버 할당량이 초과되어 오프라인 모드로 전환되었습니다.';
         break;
       }
 
@@ -207,6 +223,15 @@ export async function processSyncQueue(
           lastAttempt: Date.now(),
           errorMessage: errorMsg,
         });
+
+        // Quota Limit Exceeded: switch to offline and stop queue
+        if (isQuotaExceededError(err)) {
+          setServerQuotaExceeded(true);
+          await disableFirestoreNetwork().catch(() => {});
+          currentStatus.lastError = 'Quota limit exceeded: 서버 할당량이 초과되어 오프라인 모드로 전환되었습니다.';
+          notifySyncListeners();
+          break;
+        }
 
         currentStatus.lastError = errorMsg;
         notifySyncListeners();

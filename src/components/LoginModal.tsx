@@ -62,11 +62,11 @@ export const LoginModal: React.FC = () => {
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto py-10 sm:py-6"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto"
       onClick={closeLoginModal}
     >
       <div 
-        className="bg-white border border-stone-200 w-[95vw] max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col text-stone-900 my-auto"
+        className="bg-white border border-stone-200 w-[95vw] max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col text-stone-900 my-auto max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -254,7 +254,7 @@ export const LoginModal: React.FC = () => {
         </div>
 
         {/* Footer info */}
-        <div className="px-5 sm:px-6 py-3 bg-stone-50 border-t border-stone-200 text-[10px] sm:text-[11px] text-stone-500 flex items-center justify-between">
+        <div className="px-5 sm:px-6 py-3 bg-stone-50 border-t border-stone-200 text-[10px] sm:text-[11px] text-stone-500 flex items-center justify-between shrink-0">
           <span className="truncate mr-2">방문자 모드: 코스 검색 및 지도 탐색 가능</span>
           <span className="text-amber-700 font-bold shrink-0">관리자 전용</span>
         </div>

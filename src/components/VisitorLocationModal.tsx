@@ -200,37 +200,37 @@ export const VisitorLocationModal: React.FC<VisitorLocationModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/70 backdrop-blur-xs animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-stone-900/70 backdrop-blur-xs animate-fadeIn">
       <div 
-        className="bg-white rounded-2xl max-w-5xl w-full h-[90vh] max-h-[850px] shadow-2xl flex flex-col overflow-hidden border border-stone-200"
+        className="bg-white rounded-2xl max-w-5xl w-full h-[94dvh] max-h-[850px] shadow-2xl flex flex-col overflow-hidden border border-stone-200 my-auto"
         role="dialog"
         aria-modal="true"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 bg-stone-50/80">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-sky-100 border border-sky-200 flex items-center justify-center text-sky-700 shadow-2xs">
-              <Users className="w-5 h-5" />
+        <div className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-3.5 border-b border-stone-200 bg-stone-50/80 gap-2">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-100 border border-sky-200 flex items-center justify-center text-sky-700 shadow-2xs shrink-0">
+              <Users className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-stone-900 flex items-center gap-1.5 sm:gap-2 truncate">
                 <span>방문자 위치 현황</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-semibold border border-amber-200">
-                  관리자 전용
+                <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-semibold border border-amber-200 shrink-0">
+                  관리자
                 </span>
               </h2>
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-stone-500 hidden sm:block">
                 블로그를 방문한 사용자들의 접속 위치 및 열람 기록 통계
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {onRefresh && (
               <button
                 type="button"
                 onClick={onRefresh}
-                className="p-2 text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
+                className="p-1.5 sm:p-2 text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
                 title="새로고침"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -240,16 +240,17 @@ export const VisitorLocationModal: React.FC<VisitorLocationModalProps> = ({
               type="button"
               onClick={handleClearLogs}
               disabled={isClearing || visitorLogs.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition disabled:opacity-50 cursor-pointer"
               title="방문자 위치 로그 전체 초기화"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">위치 기록 초기화</span>
+              <span className="sm:hidden text-[11px]">초기화</span>
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200/60 rounded-lg transition cursor-pointer ml-1"
+              className="p-1.5 sm:p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200/60 rounded-lg transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -320,9 +321,9 @@ export const VisitorLocationModal: React.FC<VisitorLocationModalProps> = ({
         {/* Content Body: Left is Map, Right is Log List */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           {/* Map Area */}
-          <div className="flex-1 relative min-h-[260px] md:min-h-0 bg-stone-100">
+          <div className="h-44 sm:h-56 md:h-auto md:flex-1 relative min-h-[160px] md:min-h-0 bg-stone-100 shrink-0 md:shrink">
             <div ref={mapContainerRef} className="w-full h-full" />
-            <div className="absolute top-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-lg shadow-md border border-stone-200 text-[11px] text-stone-700 flex items-center gap-1.5 font-medium">
+            <div className="absolute top-3 left-3 z-[1000] bg-white/95 backdrop-blur-xs px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg shadow-md border border-stone-200 text-[10px] sm:text-[11px] text-stone-700 flex items-center gap-1.5 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-ping inline-block" />
               <span>파란 마커: 방문자 접속 위치</span>
             </div>

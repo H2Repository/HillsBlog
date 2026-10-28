@@ -82,30 +82,30 @@ ${FLUTTER_CODE_SNIPPETS.readme}
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="bg-stone-900 border border-stone-700 w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-stone-100"
+        className="bg-stone-900 border border-stone-700 w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94dvh] text-stone-100 my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-stone-800 bg-stone-950 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center font-bold">
-              <FlutterIcon className="w-6 h-6" />
+        <div className="p-3 sm:p-5 border-b border-stone-800 bg-stone-950 flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center font-bold shrink-0">
+              <FlutterIcon className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-bold text-white">
-                  Hill's Blog • Flutter (Dart) 모바일 소스코드
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-sm sm:text-base md:text-lg font-bold text-white truncate">
+                  Flutter (Dart) 모바일 소스코드
                 </h2>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-mono">
+                <span className="text-[10px] sm:text-[11px] px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-mono shrink-0">
                   Flutter 3.x
                 </span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  히스토리 지도 & Firebase 지원
+                <span className="text-[10px] sm:text-[11px] px-1.5 sm:px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 shrink-0 hidden xs:inline-block">
+                  GPS & Firebase
                 </span>
               </div>
-              <p className="text-xs text-stone-400 mt-0.5">
+              <p className="text-xs text-stone-400 mt-0.5 hidden sm:block">
                 실시간 위치(GPS), 사진 첨부, 히스토리 지도(OpenStreetMap 경로 궤적), Firestore 클라우드 실시간 동기화 완비
               </p>
             </div>
@@ -114,7 +114,7 @@ ${FLUTTER_CODE_SNIPPETS.readme}
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition"
+            className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition shrink-0"
           >
             <X className="w-5 h-5" />
           </button>

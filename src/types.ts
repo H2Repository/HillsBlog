@@ -51,6 +51,8 @@ export interface DiaryEntry {
 
 export type ViewMode = 'blog' | 'map' | 'timeline';
 
+export type CloudSyncStatus = 'syncing' | 'connected' | 'offline' | 'limit';
+
 export interface VisitorLog {
   id: string;
   timestamp: number;

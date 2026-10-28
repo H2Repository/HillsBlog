@@ -489,34 +489,36 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden my-auto max-h-[95dvh] flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-white">
-              <Compass className="w-5 h-5" />
+        <div className="px-3.5 sm:px-6 py-3 sm:py-4 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800 gap-2">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-amber-600 flex items-center justify-center text-white shrink-0">
+              <Compass className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-bold">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-lg font-bold truncate">
                 {initialEntry ? '여행 일기 수정' : '새로운 여행 일기 쓰기'}
               </h2>
-              <p className="text-xs text-stone-400">
+              <p className="text-xs text-stone-400 hidden sm:block">
                 실시간 위치와 사진을 연동하여 오늘의 여행 순간을 기록하세요
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               id="btn-editor-reset-header"
               type="button"
               onClick={handleResetForm}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-medium transition border border-stone-700 active:scale-95"
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-[11px] sm:text-xs font-medium transition border border-stone-700 active:scale-95"
               title="입력한 모든 일기 내용을 깨끗하게 초기화합니다"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-              <span>내용 초기화</span>
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>
+                <span className="hidden sm:inline">내용 </span>초기화
+              </span>
             </button>
 
             <button
@@ -539,12 +541,12 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
         )}
 
         {/* Scrollable Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-5 sm:space-y-6">
           {/* SECTION 1: Real-time Location & Map Integration */}
-          <div className="bg-amber-50/50 rounded-xl p-4 sm:p-5 border border-amber-200/80">
+          <div className="bg-amber-50/50 rounded-xl p-3.5 sm:p-5 border border-amber-200/80">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <MapPin className="w-5 h-5 text-amber-700" />
+                <MapPin className="w-5 h-5 text-amber-700 shrink-0" />
                 <h3 className="text-sm font-bold text-stone-900">
                   실시간 위치 연동 & 여행지 지정
                 </h3>
@@ -570,14 +572,14 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
             {gpsMessage && (
               <div className="mb-3 text-xs px-3 py-1.5 rounded bg-stone-900 text-stone-200 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>{gpsMessage}</span>
+                <span className="truncate">{gpsMessage}</span>
               </div>
             )}
 
             {/* Location Inputs & Interactive Mini Map Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Mini Map */}
-              <div className="lg:col-span-5 h-48 rounded-xl overflow-hidden border border-stone-300 relative">
+              <div className="lg:col-span-5 h-44 sm:h-48 rounded-xl overflow-hidden border border-stone-300 relative">
                 <div ref={miniMapContainerRef} className="w-full h-full" />
                 <div className="absolute bottom-1.5 left-1.5 bg-stone-900/80 text-white text-[10px] px-2 py-0.5 rounded shadow pointer-events-none">
                   지도를 클릭하거나 핀을 드래그하여 위치 변경
@@ -613,7 +615,7 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
                 </div>
 
                 <div className="flex gap-2">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       구체적 여행 포인트 / 명소 (현지 언어)
                     </label>
@@ -625,11 +627,11 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
                       className="w-full px-3 py-2 text-xs sm:text-sm rounded-lg border border-stone-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/50"
                     />
                   </div>
-                  <div className="w-28">
+                  <div className="w-24 sm:w-28 shrink-0">
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       좌표
                     </label>
-                    <div className="text-[11px] text-stone-600 bg-stone-100 px-2 py-2.5 rounded-lg border border-stone-200 truncate">
+                    <div className="text-[10px] sm:text-[11px] text-stone-600 bg-stone-100 px-2 py-2 sm:py-2.5 rounded-lg border border-stone-200 truncate">
                       {location.lat.toFixed(3)}, {location.lng.toFixed(3)}
                     </div>
                   </div>
@@ -1089,27 +1091,29 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
             </div>
           </div>
 
-          {/* Footer Buttons & 2MB Capacity Meter */}
-          <div className="pt-4 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-start">
+          {/* Footer Buttons & 10MB Capacity Meter */}
+          <div className="pt-3 sm:pt-4 border-t border-stone-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
               <button
                 id="btn-editor-reset-footer"
                 type="button"
                 onClick={handleResetForm}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-600 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition border border-stone-200 hover:border-rose-300 active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-stone-600 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition border border-stone-200 hover:border-rose-300 active:scale-95 cursor-pointer"
                 title="작성 중인 모든 입력 내용을 깨끗하게 초기화합니다"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-stone-400" />
-                <span>내용 초기화</span>
+                <span>
+                  <span className="hidden sm:inline">내용 </span>초기화
+                </span>
               </button>
 
               {/* 10MB Capacity Meter & 3MB Photo limit */}
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-stone-100 border border-stone-200 text-xs">
-                <span className="text-stone-500 text-[11px]">작성 용량:</span>
-                <span className={`font-mono text-xs font-bold ${isOverLimit ? 'text-rose-600' : 'text-stone-700'}`}>
-                  {formatBytes(currentPayloadBytes)} / 10 MB
+              <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1 rounded-lg bg-stone-100 border border-stone-200 text-[11px] sm:text-xs">
+                <span className="text-stone-500 text-[10px] sm:text-[11px]">용량:</span>
+                <span className={`font-mono text-[11px] sm:text-xs font-bold ${isOverLimit ? 'text-rose-600' : 'text-stone-700'}`}>
+                  {formatBytes(currentPayloadBytes)} / 10MB
                 </span>
-                <div className="w-16 h-1.5 rounded-full bg-stone-200 overflow-hidden hidden sm:block">
+                <div className="w-12 sm:w-16 h-1.5 rounded-full bg-stone-200 overflow-hidden hidden xs:block">
                   <div
                     className={`h-full transition-all duration-300 ${
                       isOverLimit ? 'bg-rose-500' : currentPayloadBytes > 7000000 ? 'bg-amber-500' : 'bg-emerald-500'
@@ -1123,20 +1127,20 @@ export const DiaryEditorModal: React.FC<DiaryEditorModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-xl transition cursor-pointer"
+                className="flex-1 sm:flex-initial px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-xl transition cursor-pointer text-center justify-center"
               >
                 취소
               </button>
               <button
                 type="submit"
                 disabled={isOverLimit}
-                className="px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-semibold shadow-md shadow-amber-900/30 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                className="flex-1 sm:flex-initial px-5 sm:px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold shadow-md shadow-amber-900/30 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer text-center"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4 shrink-0" />
                 <span>{initialEntry ? '일기 수정 완료' : '일기 등록'}</span>
               </button>
             </div>

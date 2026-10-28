@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DiaryEntry, TravelPhoto, ViewMode, VisitorLog } from './types';
+import { DiaryEntry, TravelPhoto, ViewMode, VisitorLog, CloudSyncStatus } from './types';
 import { 
   getStoredDiaries, 
   saveDiaries, 
@@ -24,7 +24,11 @@ import {
   resetAllDiaryViews,
   fetchDiaryFullPhotos,
   updateOptimizedDiaryToFirestore,
-  disableFirestoreNetwork
+  disableFirestoreNetwork,
+  isQuotaExceededError,
+  isServerQuotaExceeded,
+  setServerQuotaExceeded,
+  subscribeServerQuota
 } from './services/diaryFirestore';
 import { recordVisitorLocation, subscribeVisitorLogs } from './services/visitorService';
 import { optimizeAllDiaries } from './utils/imageCompressor';
@@ -78,11 +82,23 @@ export default function App() {
   const { isAdmin, openLoginModal, autoLogoutNotice, clearAutoLogoutNotice } = useAuth();
   const [diaries, setDiaries] = useState<DiaryEntry[]>(() => getStoredDiaries());
   const [viewMode, setViewMode] = useState<ViewMode>('blog');
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<'syncing' | 'connected' | 'offline'>('syncing');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>(() =>
+    isServerQuotaExceeded() ? 'limit' : 'syncing'
+  );
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [visitorLogs, setVisitorLogs] = useState<VisitorLog[]>([]);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
+
+  // Subscribe to quota exceeded state
+  useEffect(() => {
+    const unsubscribe = subscribeServerQuota((exceeded) => {
+      if (exceeded) {
+        setCloudSyncStatus('limit');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Subscribe to real-time visitor logs when admin is logged in
   useEffect(() => {
@@ -96,7 +112,9 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeSyncStatus((status) => {
       setPendingSyncCount(status.pendingCount);
-      if (status.isSyncing) {
+      if (isServerQuotaExceeded()) {
+        setCloudSyncStatus('limit');
+      } else if (status.isSyncing) {
         setCloudSyncStatus('syncing');
       } else {
         setCloudSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
@@ -174,20 +192,44 @@ export default function App() {
           serverAddedCount,
           serverUpdatedCount,
           serverDeletedCount,
+          error: syncError,
         } = await syncInitialDiariesOnline((msg) => {
           if (isMounted && isAdmin) {
             setToastMessage({ text: msg, type: 'info' });
           }
         });
         if (isMounted) {
+          if (isQuotaExceededError(syncError) || isServerQuotaExceeded()) {
+            setCloudSyncStatus('limit');
+            await disableFirestoreNetwork().catch(() => {});
+            setToastMessage({
+              text: '서버 무료 할당량 초과(Quota limit exceeded)로 안전한 오프라인 모드로 전환되었습니다. 일기는 로컬에 안전하게 보존됩니다.',
+              type: 'error',
+            });
+            setTimeout(() => setToastMessage(null), 6000);
+            return;
+          }
+
           if (freshDiaries && freshDiaries.length > 0) {
             setDiaries(sortDiariesDescending(freshDiaries));
+            if (!isAdmin) {
+              setToastMessage(null);
+            }
           }
+
+          if (syncError && (!freshDiaries || freshDiaries.length === 0)) {
+            setToastMessage({ 
+              text: `동기화 실패: ${syncError}. 인터넷 연결 확인 후 하단 버튼으로 다시 시도해 주세요.`, 
+              type: 'error' 
+            });
+            setTimeout(() => setToastMessage(null), 6000);
+          }
+          
           if (isAdmin) {
             const freshQueueCount = await getLocalSyncQueueCount().catch(() => 0);
             setPendingSyncCount(freshQueueCount);
           }
-          setCloudSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
+          setCloudSyncStatus(isServerQuotaExceeded() ? 'limit' : 'offline');
           
           if (isAdmin) {
             let toastText = '추가 완료: 서버와 로컬 DB가 최신 상태로 동기화되었습니다.';
@@ -212,8 +254,18 @@ export default function App() {
       } catch (err) {
         console.warn('Initial online sync error:', err);
         if (isMounted) {
-          setCloudSyncStatus('offline');
-          if (isAdmin) setToastMessage(null);
+          if (isQuotaExceededError(err) || isServerQuotaExceeded()) {
+            setCloudSyncStatus('limit');
+            await disableFirestoreNetwork().catch(() => {});
+            setToastMessage({
+              text: '서버 무료 할당량 초과(Quota limit exceeded)로 안전한 오프라인 모드로 전환되었습니다.',
+              type: 'error',
+            });
+            setTimeout(() => setToastMessage(null), 6000);
+          } else {
+            setCloudSyncStatus('offline');
+            if (isAdmin) setToastMessage(null);
+          }
         }
       }
     };
@@ -227,15 +279,6 @@ export default function App() {
 
   // Manual trigger for background upload retry queue & server sync (Admin Only)
   const handleTriggerSync = async () => {
-    if (!isAdmin) {
-      setToastMessage({
-        text: '클라우드 동기화는 관리자 모드에서만 실행할 수 있습니다.',
-        type: 'error',
-      });
-      setTimeout(() => setToastMessage(null), 2500);
-      return;
-    }
-
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setToastMessage({
         text: '현재 오프라인 상태입니다. 인터넷에 연결되면 자동 동기화됩니다.',
@@ -245,63 +288,97 @@ export default function App() {
       return;
     }
 
+    // Allow fresh connection attempt when user explicitly clicks sync
+    setServerQuotaExceeded(false);
     setCloudSyncStatus('syncing');
     setToastMessage({
-      text: '서버 데이터와 로컬 DB를 비교 및 동기화 중입니다...',
+      text: isAdmin ? '서버 데이터와 로컬 DB를 비교 및 동기화 중입니다...' : '서버에서 최신 일기를 불러오는 중입니다...',
       type: 'info',
     });
 
     try {
-      await cleanAndHealSyncQueue();
-      const currentQueue = await getLocalSyncQueueCount().catch(() => 0);
-      let uploadSuccess = 0;
-      if (currentQueue > 0) {
-        const { successCount } = await processSyncQueue();
-        uploadSuccess = successCount;
+      if (isAdmin) {
+        await cleanAndHealSyncQueue();
+        const currentQueue = await getLocalSyncQueueCount().catch(() => 0);
+        if (currentQueue > 0) {
+          await processSyncQueue();
+        }
       }
 
-      // Check server changes, record logs, and update local DB
+      // Check server changes and update state (Pulling works for everyone)
       const {
         diaries: freshDiaries,
         addedToServerCount,
         serverAddedCount,
         serverUpdatedCount,
         serverDeletedCount,
+        error: syncError,
       } = await syncInitialDiariesOnline();
 
-      if (freshDiaries && freshDiaries.length > 0) {
+      if (isQuotaExceededError(syncError) || isServerQuotaExceeded()) {
+        setCloudSyncStatus('limit');
+        await disableFirestoreNetwork().catch(() => {});
+        setToastMessage({
+          text: '서버 무료 할당량 초과(Quota limit exceeded): 서버 연결을 중단하고 안전한 오프라인 모드로 전환되었습니다. 작성하신 일기는 로컬에 안전하게 보관됩니다.',
+          type: 'error',
+        });
+        setTimeout(() => setToastMessage(null), 6000);
+        return;
+      }
+
+      if (syncError && (!freshDiaries || freshDiaries.length === 0)) {
+        setToastMessage({ text: `동기화 실패: ${syncError}. 네트워크를 확인해 주세요.`, type: 'error' });
+        setTimeout(() => setToastMessage(null), 5000);
+        setCloudSyncStatus('connected');
+        return;
+      }
+
+      if (freshDiaries) {
         setDiaries(sortDiariesDescending(freshDiaries));
       }
-      const finalQueue = await getLocalSyncQueueCount().catch(() => 0);
-      setPendingSyncCount(finalQueue);
-      setCloudSyncStatus('connected');
-
-      const serverChanges = (serverAddedCount || 0) + (serverUpdatedCount || 0) + (serverDeletedCount || 0);
-      let msg = '추가 완료: 서버와 로컬 DB가 최신 상태로 동기화되었습니다.';
-      if (uploadSuccess > 0 || (addedToServerCount || 0) > 0 || serverChanges > 0) {
-        const parts: string[] = [];
-        if (uploadSuccess > 0 || addedToServerCount > 0) {
-          parts.push(`서버 저장 ${uploadSuccess + (addedToServerCount || 0)}건`);
-        }
-        if (serverAddedCount > 0) parts.push(`로컬 추가 ${serverAddedCount}건`);
-        if (serverUpdatedCount > 0) parts.push(`로컬 업데이트 ${serverUpdatedCount}건`);
-        if (serverDeletedCount > 0) parts.push(`로컬 삭제 ${serverDeletedCount}건`);
-        msg = `동기화 완료: ${parts.join(', ')} 반영되었습니다.`;
+      
+      if (isAdmin) {
+        const finalQueue = await getLocalSyncQueueCount().catch(() => 0);
+        setPendingSyncCount(finalQueue);
       }
+      
+      setCloudSyncStatus(isServerQuotaExceeded() ? 'limit' : 'offline');
 
-      setToastMessage({
-        text: msg,
-        type: 'success',
-      });
+      if (isAdmin) {
+        const serverChanges = (serverAddedCount || 0) + (serverUpdatedCount || 0) + (serverDeletedCount || 0);
+        let msg = '추가 완료: 서버와 로컬 DB가 최신 상태로 동기화되었습니다.';
+        if ((addedToServerCount || 0) > 0 || serverChanges > 0) {
+          const parts: string[] = [];
+          if (addedToServerCount > 0) parts.push(`서버 저장 ${addedToServerCount}건`);
+          if (serverAddedCount > 0) parts.push(`로컬 추가 ${serverAddedCount}건`);
+          if (serverUpdatedCount > 0) parts.push(`로컬 업데이트 ${serverUpdatedCount}건`);
+          if (serverDeletedCount > 0) parts.push(`로컬 삭제 ${serverDeletedCount}건`);
+          msg = `동기화 완료: ${parts.join(', ')} 반영되었습니다.`;
+        }
+        setToastMessage({ text: msg, type: 'success' });
+      } else {
+        setToastMessage({ text: '서버 최신 일기 불러오기 완료', type: 'success' });
+      }
+      
       setTimeout(() => setToastMessage(null), 2000);
     } catch (err) {
       console.warn('handleTriggerSync error:', err);
-      setCloudSyncStatus('offline');
-      setToastMessage({
-        text: '동기화 중 오류가 발생했습니다. 잠시 후 자동 재시도됩니다.',
-        type: 'error',
-      });
-      setTimeout(() => setToastMessage(null), 2000);
+      if (isQuotaExceededError(err) || isServerQuotaExceeded()) {
+        setCloudSyncStatus('limit');
+        await disableFirestoreNetwork().catch(() => {});
+        setToastMessage({
+          text: '서버 무료 할당량 초과(Quota limit exceeded): 서버 연결을 중단하고 안전한 오프라인 모드로 전환되었습니다. 작성하신 일기는 로컬에 안전하게 보관됩니다.',
+          type: 'error',
+        });
+        setTimeout(() => setToastMessage(null), 6000);
+      } else {
+        setCloudSyncStatus('offline');
+        setToastMessage({
+          text: '동기화 중 오류가 발생했습니다. 인터넷 연결을 확인해주세요.',
+          type: 'error',
+        });
+        setTimeout(() => setToastMessage(null), 2000);
+      }
     }
   };
 
@@ -363,14 +440,21 @@ export default function App() {
           serverAddedCount,
           serverUpdatedCount,
           serverDeletedCount,
+          error: syncError,
         } = await syncInitialDiariesOnline();
+
+        if (syncError) {
+          console.warn('[Sync] Background online sync timeout:', syncError);
+          setCloudSyncStatus('offline');
+          return;
+        }
 
         if (freshDiaries && freshDiaries.length > 0) {
           setDiaries(sortDiariesDescending(freshDiaries));
         }
         const finalQueue = await getLocalSyncQueueCount().catch(() => 0);
         setPendingSyncCount(finalQueue);
-        setCloudSyncStatus('connected');
+        setCloudSyncStatus('offline');
 
         const serverChanges = (serverAddedCount || 0) + (serverUpdatedCount || 0) + (serverDeletedCount || 0);
         let msg = '추가 완료: 서버와 로컬 DB가 최신 상태로 동기화되었습니다.';
@@ -416,7 +500,11 @@ export default function App() {
 
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
         try {
-          const { diaries: freshDiaries, serverUpdatedCount, serverAddedCount, serverDeletedCount } = await syncInitialDiariesOnline();
+          const { diaries: freshDiaries, serverUpdatedCount, serverAddedCount, serverDeletedCount, error: syncError } = await syncInitialDiariesOnline();
+          if (syncError) {
+            console.warn('[Sync] Visibility refresh timeout:', syncError);
+            return;
+          }
           if (freshDiaries && freshDiaries.length > 0) {
             setDiaries(sortDiariesDescending(freshDiaries));
           }
@@ -574,7 +662,7 @@ export default function App() {
         await saveDiaryToFirestore(targetEntry);
         await dequeueLocalSyncItem(targetEntry.id);
         setPendingSyncCount(await getLocalSyncQueueCount());
-        setCloudSyncStatus('connected');
+        setCloudSyncStatus('offline');
         setToastMessage({
           text: isExisting ? '수정 완료: 일기가 서버에 정상 업데이트되었습니다.' : '추가 완료: 새 일기가 서버에 정상 등록되었습니다.',
           type: 'success',
@@ -652,7 +740,7 @@ export default function App() {
         await deleteDiaryFromFirestore(targetId);
         await dequeueLocalSyncItem(targetId);
         setPendingSyncCount(await getLocalSyncQueueCount());
-        setCloudSyncStatus('connected');
+        setCloudSyncStatus('offline');
         setToastMessage({
           text: '삭제 완료: 서버와 로컬 DB에서 안전하게 삭제되었습니다.',
           type: 'success',
@@ -729,7 +817,7 @@ export default function App() {
       } catch (err) {
         console.warn('Online fetch on diary click note:', err);
       } finally {
-        setCloudSyncStatus(navigator.onLine ? 'connected' : 'offline');
+        setCloudSyncStatus('offline');
       }
     } else if (!isAdmin) {
       // Visitor / Logged-out mode: no sync or refresh
@@ -882,6 +970,32 @@ export default function App() {
         onTriggerSync={handleTriggerSync}
       />
 
+      {/* Pending Sync Alert Bar (Requirement: Top display for unsynced items) */}
+      {isAdmin && pendingSyncCount > 0 && (
+        <div className={`px-4 py-2 text-center text-xs font-bold shadow-md animate-in slide-in-from-top duration-300 flex items-center justify-center gap-2 ${
+          cloudSyncStatus === 'limit'
+            ? 'bg-rose-600 text-white'
+            : 'bg-amber-500 text-stone-950'
+        }`}>
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>
+            {cloudSyncStatus === 'limit'
+              ? `서버 할당량 초과(limit): 오프라인 상태에서 추가, 수정 또는 삭제된 일기가 ${pendingSyncCount}건 안전하게 보관 중입니다.`
+              : `오프라인 상태에서 추가, 수정 또는 삭제된 일기가 ${pendingSyncCount}건 있습니다.`}
+          </span>
+          <button 
+            onClick={handleTriggerSync}
+            className={`ml-2 px-2.5 py-0.5 rounded transition text-[10px] cursor-pointer ${
+              cloudSyncStatus === 'limit'
+                ? 'bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-400/40'
+                : 'bg-stone-900 text-white hover:bg-stone-800'
+            }`}
+          >
+            {cloudSyncStatus === 'limit' ? '재시도' : '지금 동기화'}
+          </button>
+        </div>
+      )}
+
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {/* Welcome & Mood Header (Shown on Blog, Timeline, and TimeOfDay views) */}
@@ -939,6 +1053,8 @@ export default function App() {
             }}
             onResetAllViews={handleResetAllViews}
             onOpenVisitorModal={() => setIsVisitorModalOpen(true)}
+            onTriggerSync={handleTriggerSync}
+            cloudSyncStatus={cloudSyncStatus}
           />
         )}
 
@@ -954,7 +1070,7 @@ export default function App() {
       </main>
 
       {/* Fixed Bottom Footer */}
-      <footer className="fixed bottom-0 left-0 right-0 z-30 bg-stone-900/95 text-stone-300 border-t border-stone-800 backdrop-blur-md shadow-lg py-2.5 sm:py-3">
+      <footer className="fixed bottom-0 left-0 right-0 z-30 bg-stone-900/95 text-stone-300 border-t border-stone-800 backdrop-blur-md shadow-lg py-2 sm:py-2.5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-bold text-white tracking-tight truncate">{t('appTitle')}</span>

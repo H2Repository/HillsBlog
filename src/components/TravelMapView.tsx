@@ -469,7 +469,7 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
         </div>
 
         {/* Floating Route Summary Overlay on Map */}
-        <div className="absolute top-4 left-4 z-10 bg-stone-900/90 text-white backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-xl border border-stone-700/60 flex items-center gap-4 text-xs">
+        <div className="absolute top-3 sm:top-4 left-3 sm:left-4 z-10 bg-stone-900/90 text-white backdrop-blur-md px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl shadow-xl border border-stone-700/60 flex items-center gap-2.5 sm:gap-4 text-[11px] sm:text-xs max-w-[calc(100vw-1.5rem)]">
           <div className="flex items-center gap-1.5">
             <Route className="w-4 h-4 text-amber-400" />
             <span className="text-stone-400">{t('mapTotalDistance')}:</span>

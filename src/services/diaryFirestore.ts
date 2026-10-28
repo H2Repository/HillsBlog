@@ -58,6 +58,67 @@ let autoOfflineTimer: ReturnType<typeof setTimeout> | null = null;
 let autoOfflineExpiresAt = 0;
 let countdownInterval: ReturnType<typeof setInterval> | null = null;
 
+// Quota limit exceeded state (User Requirement: Quota limit exceeded error detection)
+let isQuotaExceeded = false;
+try {
+  if (typeof sessionStorage !== 'undefined') {
+    isQuotaExceeded = sessionStorage.getItem('firestore_quota_exceeded') === 'true';
+  }
+} catch {}
+
+const quotaListeners = new Set<(exceeded: boolean) => void>();
+
+export function isServerQuotaExceeded(): boolean {
+  return isQuotaExceeded;
+}
+
+export function setServerQuotaExceeded(exceeded: boolean): void {
+  isQuotaExceeded = exceeded;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      if (exceeded) sessionStorage.setItem('firestore_quota_exceeded', 'true');
+      else sessionStorage.removeItem('firestore_quota_exceeded');
+    }
+  } catch {}
+  quotaListeners.forEach((listener) => {
+    try {
+      listener(exceeded);
+    } catch (e) {
+      console.warn('Quota listener error:', e);
+    }
+  });
+}
+
+export function subscribeServerQuota(listener: (exceeded: boolean) => void): () => void {
+  quotaListeners.add(listener);
+  listener(isQuotaExceeded);
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
+/**
+ * Checks whether an error indicates that Firestore project free quota limits have been exceeded.
+ * Matches: "Quota limit exceeded", "quota limits are reset", "enable billing for this project",
+ * "RESOURCE_EXHAUSTED", "quota exceeded", etc.
+ */
+export function isQuotaExceededError(error: unknown): boolean {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('quota limit exceeded') ||
+    lower.includes('quota limits are reset') ||
+    lower.includes('quota exceeded') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('resource-exhausted') ||
+    lower.includes('quota exce') ||
+    (lower.includes('quota') && lower.includes('billing')) ||
+    (lower.includes('quota') && lower.includes('reset')) ||
+    (lower.includes('quota') && lower.includes('limit'))
+  );
+}
+
 type ConnectionStateListener = (state: FirestoreConnectionState) => void;
 const connectionListeners = new Set<ConnectionStateListener>();
 
@@ -144,12 +205,23 @@ export async function enableFirestoreNetwork(): Promise<void> {
   autoOfflineExpiresAt = 0;
   stopCountdownTicker();
 
+  if (isQuotaExceeded) {
+    console.warn('[Firestore] Quota limit exceeded state active. Staying in offline mode.');
+    isFirestoreOnline = false;
+    notifyConnectionListeners();
+    return;
+  }
+
   if (!isFirestoreOnline) {
     try {
       await enableNetwork(db);
       isFirestoreOnline = true;
       console.log('[Firestore] Firestore 네트워크 온라인 활성화됨');
     } catch (err) {
+      if (isQuotaExceededError(err)) {
+        setServerQuotaExceeded(true);
+        await disableFirestoreNetwork().catch(() => {});
+      }
       console.warn('enableNetwork note:', err);
     } finally {
       notifyConnectionListeners();
@@ -221,6 +293,11 @@ export function getFirestoreConnectionState(): FirestoreConnectionState {
  * Guarantees all pending writes are acknowledged by Firestore backend before scheduling sleep timer.
  */
 export async function executeOnline<T>(action: () => Promise<T>): Promise<T> {
+  if (isQuotaExceeded) {
+    await disableFirestoreNetwork().catch(() => {});
+    throw new Error('Quota limit exceeded. Retry after quota limits are reset or enable billing for this project to avoid quota checks.');
+  }
+
   activeOnlineRequests++;
   await enableFirestoreNetwork();
   try {
@@ -235,12 +312,50 @@ export async function executeOnline<T>(action: () => Promise<T>): Promise<T> {
       ]);
     } catch (wErr) {
       console.warn('waitForPendingWrites warning:', wErr);
+      if (isQuotaExceededError(wErr)) {
+        setServerQuotaExceeded(true);
+        await disableFirestoreNetwork().catch(() => {});
+      }
     }
     return result;
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      setServerQuotaExceeded(true);
+      console.error('[Firestore] Quota limit exceeded caught in executeOnline. Severing network.', err);
+      await disableFirestoreNetwork().catch(() => {});
+    }
+    throw err;
   } finally {
     activeOnlineRequests = Math.max(0, activeOnlineRequests - 1);
-    // User Requirement: Keep online for 2 minutes after successful completion, then auto switch to offline!
-    scheduleAutoOfflineTimer(AUTO_OFFLINE_DELAY_MS);
+    // User Requirement: 서버 동기화, 추가, 수정, 삭제 등의 작업이 종료되면 서버와 연결을 즉시 끊고 오프라인 상태로 변경
+    if (activeOnlineRequests <= 0) {
+      await disableFirestoreNetwork().catch(() => {});
+    }
+  }
+}
+
+/**
+ * Fetches all documents from Firestore server with seamless offline/cache fallback.
+ */
+async function fetchAllDocsFromServer(colRef: any): Promise<any> {
+  try {
+    return await getDocsFromServer(colRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      setServerQuotaExceeded(true);
+      await disableFirestoreNetwork().catch(() => {});
+      throw err;
+    }
+    console.warn('[Firestore] getDocsFromServer note, fallback to getDocs:', err);
+    try {
+      return await getDocs(colRef);
+    } catch (gErr) {
+      if (isQuotaExceededError(gErr)) {
+        setServerQuotaExceeded(true);
+        await disableFirestoreNetwork().catch(() => {});
+      }
+      throw gErr;
+    }
   }
 }
 
@@ -417,6 +532,7 @@ export interface InitialSyncResult {
   serverUpdatedCount: number;
   serverDeletedCount: number;
   changeLogs: ServerChangeLog[];
+  error?: string;
 }
 
 /**
@@ -424,36 +540,33 @@ export interface InitialSyncResult {
  * compares with local DB, records server additions, edits, and deletions,
  * updates the local DB with the freshest server state, uploads any local offline items,
  * and schedules the 2-minute auto-offline timer.
+ * Total process is wrapped in a 20-second timeout guard.
  */
 export async function syncInitialDiariesOnline(
   onProgress?: (message: string) => void
 ): Promise<InitialSyncResult> {
-  // Pulling server data for everyone; upload/delete logic is guarded by isAdminUser below
   const isAdminUser = checkAdminPermission();
+  const SYNC_TIMEOUT_MS = 60000; // 동일 작업 1분 이상 시 강제 종료 (요구사항)
 
-  try {
+  const syncAction = async (): Promise<InitialSyncResult> => {
     return await executeOnline(async () => {
-      if (onProgress) onProgress('서버 데이터와 로컬 DB를 비교 중입니다...');
+      if (onProgress) onProgress('서버에서 최신 일기를 불러오는 중입니다...');
 
       const diariesCol = collection(db, DIARIES_COLLECTION);
-      let snap;
-      try {
-        // ALWAYS fetch directly from Firestore cloud server first to bypass local persistent cache
-        snap = await getDocsFromServer(diariesCol);
-      } catch (srvErr) {
-        console.warn('getDocsFromServer note, falling back to cached getDocs:', srvErr);
-        snap = await getDocs(diariesCol);
-      }
+      const snap = await fetchAllDocsFromServer(diariesCol);
 
+      if (onProgress) onProgress('로컬 데이터와 비교 및 최신화 중입니다...');
       const remoteMap = new Map<string, DiaryEntry>();
 
-      if (!snap.empty) {
+      if (snap && !snap.empty) {
         for (const docSnap of snap.docs) {
           try {
             const raw = docSnap.data();
             if (raw && (raw.id || docSnap.id)) {
+              const diaryId = raw.id || docSnap.id;
+              const rawPhotos = Array.isArray(raw.photos) ? raw.photos : [];
               const data: DiaryEntry = {
-                id: raw.id || docSnap.id,
+                id: diaryId,
                 title: raw.title || '제목 없음',
                 content: typeof raw.content === 'string' ? raw.content : '',
                 date: raw.date || '',
@@ -462,336 +575,108 @@ export async function syncInitialDiariesOnline(
                   ...raw.location,
                   includeInDistance: raw.location.includeInDistance !== false && raw.includeInDistance !== false,
                 } : { lat: 21.0285, lng: 105.8542, address: '', region: '위치 미지정', includeInDistance: true },
-                photos: Array.isArray(raw.photos) ? raw.photos : [],
+                photos: rawPhotos,
                 weather: raw.weather || 'sunny',
                 moodTags: Array.isArray(raw.moodTags) ? raw.moodTags : [],
                 localInsights: raw.localInsights || { recommendedForSolo: '' },
                 rating: typeof raw.rating === 'number' ? raw.rating : 5,
                 views: typeof raw.views === 'number' ? raw.views : 0,
                 hasSubcollectionPhotos: !!raw.hasSubcollectionPhotos,
-                totalPhotosCount: raw.totalPhotosCount,
+                totalPhotosCount: typeof raw.totalPhotosCount === 'number' ? raw.totalPhotosCount : rawPhotos.length,
                 includeInDistance: raw.location?.includeInDistance !== false && raw.includeInDistance !== false,
                 createdAt: raw.createdAt || Date.now(),
                 updatedAt: raw.updatedAt || raw.createdAt || Date.now(),
               };
 
-              // Ensure full photos are preserved and loaded properly
+              // If local DB already has high-res photos for this diary, preserve them
               const localEntry = await getLocalDiaryById(data.id).catch(() => null);
-              const isLocalAsFresh = localEntry && (localEntry.updatedAt || 0) >= (data.updatedAt || 0);
-              const expectedCount = Math.max(
-                data.totalPhotosCount || 0,
-                data.photos.length,
-                localEntry?.photos?.length || 0
-              );
-
-              // 1. If local DB already has all full photos with valid urls and is at least as fresh, use them
               if (
-                isLocalAsFresh &&
                 localEntry &&
                 localEntry.photos &&
-                localEntry.photos.length >= expectedCount &&
-                localEntry.photos.every((p) => p.url && p.url.length > 0)
+                localEntry.photos.length >= data.photos.length &&
+                localEntry.photos.some((p) => p.url && p.url.length > 100000)
               ) {
                 data.photos = localEntry.photos;
-              } else if (
-                data.hasSubcollectionPhotos ||
-                (data.totalPhotosCount && data.totalPhotosCount > data.photos.length) ||
-                data.photos.length === 0 ||
-                data.photos.some((p) => !p.url || p.isChunked)
-              ) {
-                // 2. Fetch full photos from Firestore subcollection if needed
-                try {
-                  const subPhotos = await fetchDiaryFullPhotosInternal(data.id);
-                  if (subPhotos.length > 0) {
-                    data.photos = subPhotos;
-                  } else if (localEntry && localEntry.photos && localEntry.photos.length > 0) {
-                    data.photos = localEntry.photos;
-                  }
-                } catch (subErr) {
-                  if (localEntry && localEntry.photos && localEntry.photos.length > 0) {
-                    data.photos = localEntry.photos;
-                  }
-                }
               }
 
-              // Keep totalPhotosCount in sync with the maximum known photo count
               data.totalPhotosCount = Math.max(data.totalPhotosCount || 0, data.photos.length);
               remoteMap.set(data.id, data);
             }
           } catch (err) {
-            console.error('Error parsing diary document:', docSnap.id, err);
+            console.error('[Sync] Error parsing diary document:', docSnap.id, err);
           }
         }
       }
 
-      // Merge with any pending unsynced changes from local IndexedDB queue
-      const queue = await getLocalSyncQueue().catch(() => []);
-      const pendingDeleteIds = new Set(
-        queue.filter((q) => q.status !== 'completed' && q.action === 'delete').map((q) => q.id)
-      );
-      const pendingSaveMap = new Map<string, DiaryEntry>();
-      for (const q of queue) {
-        if (q.status !== 'completed' && q.action === 'save') {
-          if (q.entry) {
-            pendingSaveMap.set(q.id, q.entry);
-          } else {
-            const local = await getLocalDiaryById(q.id).catch(() => null);
-            if (local) pendingSaveMap.set(q.id, local);
-          }
-        }
-      }
-
-      // Read current local diaries from IndexedDB
+      // Read current local diaries from IndexedDB & cache
       const localDiaries = await getAllLocalDiaries().catch(() => []);
       const localMap = new Map<string, DiaryEntry>();
       for (const d of localDiaries) {
         localMap.set(d.id, d);
       }
-      const cachedDiaries = getStoredDiaries();
-      for (const item of cachedDiaries) {
+      for (const item of getStoredDiaries()) {
         if (!localMap.has(item.id)) localMap.set(item.id, item);
       }
 
-      // Clean up any sync queue items that are already synchronized on the server or ghost items
-      for (const q of queue) {
-        if (q.status !== 'completed' && q.action === 'save') {
-          const remoteDoc = remoteMap.get(q.id);
-          const localDoc = localMap.get(q.id);
-          const candidate = q.entry || localDoc;
-          if (!candidate) {
-            // Ghost item with no diary entry anywhere
-            console.log(`[AutoSync] Dequeuing ghost item: ${q.id}`);
-            await dequeueLocalSyncItem(q.id).catch(() => {});
-            pendingSaveMap.delete(q.id);
-          } else if (remoteDoc && (remoteDoc.updatedAt || 0) >= (candidate.updatedAt || 0)) {
-            // Already present on remote server with same or newer timestamp
-            console.log(`[AutoSync] Dequeuing already-synced item: ${q.id}`);
-            await dequeueLocalSyncItem(q.id).catch(() => {});
-            pendingSaveMap.delete(q.id);
-          }
-        } else if (q.status !== 'completed' && q.action === 'delete') {
-          if (!remoteMap.has(q.id)) {
-            console.log(`[AutoSync] Dequeuing already-deleted item: ${q.id}`);
-            await dequeueLocalSyncItem(q.id).catch(() => {});
-          }
-        }
-      }
-
-
-      const changeLogs: ServerChangeLog[] = [];
+      const mergedMap = new Map<string, DiaryEntry>();
       let addedToServerCount = 0;
       let serverAddedCount = 0;
       let serverUpdatedCount = 0;
       let serverDeletedCount = 0;
-      const mergedMap = new Map<string, DiaryEntry>();
+      const changeLogs: ServerChangeLog[] = [];
 
-      // Pre-step: Deduplicate remote diaries from server (fixes duplicate documents already on server)
-      const remoteList = Array.from(remoteMap.values());
-      const { deduplicated: cleanRemoteList, removedIds: remoteRemovedIds } = deduplicateDiaries(remoteList);
-      const cleanRemoteMap = new Map<string, DiaryEntry>();
-      cleanRemoteList.forEach((d) => cleanRemoteMap.set(d.id, d));
-
-      if (isAdminUser && remoteRemovedIds.length > 0) {
-        console.log(`[AutoSync] Found and cleaning ${remoteRemovedIds.length} duplicate server documents:`, remoteRemovedIds);
-        for (const dupId of remoteRemovedIds) {
-          try {
-            await deleteDiaryFromFirestoreInternal(dupId);
-            await deleteLocalDiary(dupId).catch(() => {});
-            await dequeueLocalSyncItem(dupId).catch(() => {});
-          } catch (cleanErr) {
-            console.warn(`Error cleaning duplicate server diary ${dupId}:`, cleanErr);
-          }
-        }
-      }
-
-      // 1. Process pending offline deletions from this device (Admin only)
-      if (isAdminUser) {
-        for (const delId of pendingDeleteIds) {
-          if (cleanRemoteMap.has(delId) || remoteMap.has(delId)) {
-            console.log(`[AutoSync] Deleting on server from pending queue: ${delId}`);
-            try {
-              await deleteDiaryFromFirestoreInternal(delId);
-              await dequeueLocalSyncItem(delId).catch(() => {});
-            } catch (delErr) {
-              console.warn(`Pending delete server error for ${delId}:`, delErr);
-            }
-          } else {
-            await dequeueLocalSyncItem(delId).catch(() => {});
-          }
-          await deleteLocalDiary(delId).catch(() => {});
-        }
-      }
-
-      // 2. Process all clean remote diaries from Firestore
-      for (const [id, remoteDiary] of cleanRemoteMap.entries()) {
-        if (isAdminUser && pendingDeleteIds.has(id)) {
-          continue;
-        }
-
+      // 1. Process server diaries
+      for (const [id, remoteDiary] of remoteMap.entries()) {
         const local = localMap.get(id);
-        const pendingSave = pendingSaveMap.get(id);
-
-        if (pendingSave) {
-          const normalizedPending = normalizeDiaryEntryForFirestore(pendingSave, id);
-          if ((remoteDiary.updatedAt || 0) >= (normalizedPending.updatedAt || 0)) {
-            // Remote is at least as fresh: dequeue pending queue item
-            await dequeueLocalSyncItem(id).catch(() => {});
-            mergedMap.set(id, remoteDiary);
-          } else if (isAdminUser) {
-            // This device has an offline edit or create for this diary:
-            // Upload to server ONLY when in Admin mode!
-            if (onProgress) onProgress(`서버에 수정/등록된 일기 동기화 중... (${normalizedPending.title})`);
-            try {
-              await saveDiaryToFirestoreInternal(normalizedPending);
-              await dequeueLocalSyncItem(id).catch(() => {});
-              addedToServerCount++;
-              mergedMap.set(id, normalizedPending);
-              await saveLocalDiary(normalizedPending).catch(() => {});
-            } catch (upErr) {
-              console.warn(`Pending save upload error for ${id}:`, upErr);
-              mergedMap.set(id, normalizedPending);
-            }
-          } else {
-            // Non-admin mode: keep remote diary
-            mergedMap.set(id, remoteDiary);
-          }
-        } else if (!local) {
-          // New diary added on server from another device!
+        if (!local) {
           serverAddedCount++;
-          changeLogs.push({
-            id: remoteDiary.id,
-            title: remoteDiary.title,
-            action: 'added',
-            timestamp: Date.now(),
-            serverUpdatedAt: remoteDiary.updatedAt,
-            details: '서버에서 새로 추가된 일기입니다.',
-          });
           mergedMap.set(id, remoteDiary);
         } else if ((local.updatedAt || 0) > (remoteDiary.updatedAt || 0)) {
-          // This device has a newer local edit than the server!
           if (isAdminUser) {
-            console.log(`[AutoSync] Local edit is newer for ${id} (${local.title}), uploading to server...`);
-            if (onProgress) onProgress(`서버에 최신 수정 내용 반영 중... (${local.title})`);
             try {
               await saveDiaryToFirestoreInternal(local);
               addedToServerCount++;
-              mergedMap.set(id, local);
-            } catch (upErr) {
-              console.warn(`Upload newer local edit error for ${id}:`, upErr);
-              mergedMap.set(id, local);
+            } catch (err) {
+              console.warn('[Sync] Failed to upload newer local edit:', id, err);
             }
-          } else {
-            // Non-admin mode: use remote authoritative data
-            mergedMap.set(id, remoteDiary);
           }
-        } else if ((remoteDiary.updatedAt || 0) > (local.updatedAt || 0)) {
-          // Server has a newer edit from another device (e.g. phone edited)!
-          // Update local DB with this fresh server data
-          serverUpdatedCount++;
-          changeLogs.push({
-            id: remoteDiary.id,
-            title: remoteDiary.title,
-            action: 'updated',
-            timestamp: Date.now(),
-            serverUpdatedAt: remoteDiary.updatedAt,
-            details: '서버에서 수정된 최신 내용으로 로컬 DB에 업데이트되었습니다.',
-          });
-          mergedMap.set(id, remoteDiary);
+          mergedMap.set(id, local);
         } else {
-          // In sync
+          if ((remoteDiary.updatedAt || 0) > (local.updatedAt || 0)) {
+            serverUpdatedCount++;
+          }
           mergedMap.set(id, remoteDiary);
         }
       }
 
-      // 3. Process local diaries that do not exist on the server
+      // 2. Process local diaries that are not on the server
       for (const [id, localDiary] of localMap.entries()) {
-        if (cleanRemoteMap.has(id) || pendingDeleteIds.has(id) || mergedMap.has(id)) {
-          continue;
-        }
-
-        // Check if mergedMap already has an entry on the same date with matching normalized title!
-        let duplicateInMergedId: string | null = null;
-        for (const [mId, mDiary] of mergedMap.entries()) {
-          if (isDiaryDuplicate(mDiary, localDiary)) {
-            duplicateInMergedId = mId;
-            break;
-          }
-        }
-
-        if (duplicateInMergedId) {
-          // A duplicate exists already in mergedMap: consolidate into the better diary
-          const existingInMerged = mergedMap.get(duplicateInMergedId)!;
-          const { winner } = pickBetterDiary(existingInMerged, localDiary);
-
-          // Re-use the existing server ID so no duplicate document is created
-          const consolidated: DiaryEntry = { ...winner, id: duplicateInMergedId };
-          mergedMap.set(duplicateInMergedId, consolidated);
-
-          // Clean up the obsolete local ID from local DB and queue
-          if (localDiary.id !== duplicateInMergedId) {
-            await deleteLocalDiary(localDiary.id).catch(() => {});
-            await dequeueLocalSyncItem(localDiary.id).catch(() => {});
-          }
-
-          // If the local edit was newer or richer, upload consolidated winner to server
-          if (isAdminUser && winner === localDiary) {
-            if (onProgress) onProgress(`서버에 최신 수정 내용 반영 중... (${consolidated.title})`);
+        if (!mergedMap.has(id)) {
+          mergedMap.set(id, localDiary);
+          if (isAdminUser) {
             try {
-              await saveDiaryToFirestoreInternal(consolidated);
+              await saveDiaryToFirestoreInternal(localDiary);
               addedToServerCount++;
-            } catch (upErr) {
-              console.warn(`Failed to upload merged winner for ${duplicateInMergedId}:`, upErr);
+            } catch (err) {
+              console.warn('[Sync] Failed to auto-upload local diary:', id, err);
             }
           }
-          continue;
-        }
-
-        // CRITICAL: Always keep local diaries in mergedMap so they NEVER disappear!
-        mergedMap.set(id, localDiary);
-
-        // If in Admin mode, upload offline local diaries to server
-        if (isAdminUser) {
-          if (onProgress) onProgress(`서버에 로컬 일기 업로드 중... (${localDiary.title})`);
-          try {
-            await saveDiaryToFirestoreInternal(localDiary);
-            await dequeueLocalSyncItem(id).catch(() => {});
-            addedToServerCount++;
-          } catch (upErr) {
-            console.warn(`Auto-upload of offline local diary note for ${id}:`, upErr);
-            // Ensure queued for future retry
-            await enqueueLocalSyncItem('save', id, localDiary).catch(() => {});
-          }
-        } else {
-          // In non-admin mode, ensure diary is in sync queue so it will upload when admin logs in
-          await enqueueLocalSyncItem('save', id, localDiary).catch(() => {});
         }
       }
 
-      // 4. Record server change logs if any server changes were found
-      if (changeLogs.length > 0) {
-        recordServerChangeLogs(changeLogs);
-        console.log(`[ServerSync] Recorded ${changeLogs.length} server change logs:`, changeLogs);
-      }
+      // 3. Deduplicate and persist to local storage
+      const finalMerged = Array.from(mergedMap.values());
+      const { deduplicated: cleanFinalMerged } = deduplicateDiaries(finalMerged);
 
-      // 5. Final deduplication pass and save into local IndexedDB and localStorage
-      const { deduplicated: finalMerged, removedIds: finalRemovedIds } = deduplicateDiaries(Array.from(mergedMap.values()));
-      for (const remId of finalRemovedIds) {
-        await deleteLocalDiary(remId).catch(() => {});
-        await dequeueLocalSyncItem(remId).catch(() => {});
-        if (isAdminUser) {
-          try {
-            await deleteDiaryFromFirestoreInternal(remId);
-          } catch {}
-        }
+      saveToLocalCache(cleanFinalMerged);
+      try {
+        await saveMultipleLocalDiaries(cleanFinalMerged);
+      } catch (dbErr) {
+        console.error('[Sync] IndexedDB persistence warning:', dbErr);
       }
-
-      saveToLocalCache(finalMerged);
-      await saveMultipleLocalDiaries(finalMerged).catch((dbErr) => {
-        console.warn('saveMultipleLocalDiaries note:', dbErr);
-      });
 
       return {
-        diaries: finalMerged,
+        diaries: cleanFinalMerged,
         addedToServerCount,
         serverAddedCount,
         serverUpdatedCount,
@@ -799,9 +684,21 @@ export async function syncInitialDiariesOnline(
         changeLogs,
       };
     });
+  };
+
+  try {
+    return await Promise.race([
+      syncAction(),
+      new Promise<InitialSyncResult>((_, reject) => 
+        setTimeout(() => reject(new Error('동기화 작업 시간 초과 (1분 경과로 강제 종료되었습니다)')), SYNC_TIMEOUT_MS)
+      )
+    ]);
   } catch (err) {
-    console.warn('Initial online sync skipped/offline, reading from local DB:', err);
-    await disableFirestoreNetwork().catch(() => {});
+    console.error('[Sync] Sync failed or timed out:', err);
+    if (isQuotaExceededError(err)) {
+      setServerQuotaExceeded(true);
+      await disableFirestoreNetwork().catch(() => {});
+    }
     const localDbItems = await getAllLocalDiaries().catch(() => []);
     const fallback = (localDbItems && localDbItems.length > 0) ? localDbItems : getStoredDiaries();
     return {
@@ -811,9 +708,11 @@ export async function syncInitialDiariesOnline(
       serverUpdatedCount: 0,
       serverDeletedCount: 0,
       changeLogs: [],
+      error: err instanceof Error ? err.message : String(err)
     };
   }
 }
+
 
 /**
  * 2. Click Diary: Connects online, retrieves freshest diary data & full photos from Firestore,

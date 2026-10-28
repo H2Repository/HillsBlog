@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { DiaryEntry } from '../types';
+import { DiaryEntry, CloudSyncStatus } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { getLocalizedDiary } from '../utils/translationService';
 import { useTranslationVersion } from '../utils/translationService';
@@ -28,7 +28,8 @@ import {
   ChevronDown,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
-  RotateCcw
+  RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { calculateDistanceKm } from '../utils/geo';
 import { useAuth } from '../context/AuthContext';
@@ -46,6 +47,8 @@ interface BlogFeedViewProps {
   onOpenNewDiary: () => void;
   onResetAllViews?: () => void;
   onOpenVisitorModal?: () => void;
+  onTriggerSync?: () => void;
+  cloudSyncStatus?: CloudSyncStatus;
 }
 
 export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
@@ -57,6 +60,8 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
   onOpenNewDiary,
   onResetAllViews,
   onOpenVisitorModal,
+  onTriggerSync,
+  cloudSyncStatus = 'connected',
 }) => {
   const { t, language } = useLanguage();
   const { isAdmin, openLoginModal } = useAuth();
@@ -602,30 +607,48 @@ export const BlogFeedView: React.FC<BlogFeedViewProps> = ({
         /* Empty State */
         <div className="bg-white rounded-2xl border border-dashed border-stone-300 p-12 text-center max-w-lg mx-auto space-y-4">
           <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
-            <Compass className="w-6 h-6" />
+            {cloudSyncStatus === 'syncing' && diaries.length === 0 ? <Loader2 className="w-6 h-6 animate-spin" /> : <Compass className="w-6 h-6" />}
           </div>
           <div>
             <h3 className="text-base font-bold text-stone-900">
-              {t('noDiariesFound')}
+              {cloudSyncStatus === 'syncing' && diaries.length === 0 ? "서버에서 일기를 불러오는 중입니다..." : t('noDiariesFound')}
             </h3>
             <p className="text-xs text-stone-500 mt-1">
-              {t('noDiariesGuide')}
+              {cloudSyncStatus === 'syncing' && diaries.length === 0 ? "인터넷 환경에 따라 잠시 시간이 걸릴 수 있습니다." : t('noDiariesGuide')}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (isAdmin) {
-                onOpenNewDiary();
-              } else {
-                openLoginModal('새 일기 작성은 관리자만 가능합니다. 로그인해주세요.');
-              }
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
-          >
-            {isAdmin ? <Plus className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-            <span>{isAdmin ? t('btnNewDiaryFirst') : '관리자 로그인 후 작성'}</span>
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            {cloudSyncStatus !== 'syncing' && (isAdmin ? (
+              <button
+                type="button"
+                onClick={onOpenNewDiary}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{t('btnNewDiaryFirst')}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openLoginModal('새 일기 작성은 관리자만 가능합니다. 로그인해주세요.')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-white text-xs font-semibold shadow-md transition cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>관리자 로그인 후 작성</span>
+              </button>
+            ))}
+
+            {onTriggerSync && (
+              <button
+                type="button"
+                onClick={onTriggerSync}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 text-xs font-semibold shadow-sm transition cursor-pointer"
+              >
+                {cloudSyncStatus === 'syncing' ? <Loader2 className="w-4 h-4 animate-spin text-amber-600" /> : <RotateCcw className="w-4 h-4 text-amber-600" />}
+                <span>{cloudSyncStatus === 'syncing' ? "동기화 시도 중..." : "서버에서 다시 불러오기"}</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
