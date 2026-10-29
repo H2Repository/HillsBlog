@@ -168,17 +168,17 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
     }
   }
 
-  // Prevent spamming in same browser session within 10 minutes for the same diary
-  const sessionKey = `visitor_loc_logged_${diaryId}`;
+  // Prevent spamming in same browser across tabs within 30 minutes (global session debounce)
+  const sessionKey = `visitor_loc_logged_global`;
   try {
-    const lastLogged = sessionStorage.getItem(sessionKey);
+    const lastLogged = localStorage.getItem(sessionKey);
     if (lastLogged) {
       const elapsed = Date.now() - Number(lastLogged);
-      if (elapsed < 10 * 60 * 1000) {
-        return; // Already logged recently in this session
+      if (elapsed < 30 * 60 * 1000) {
+        return; // Already logged recently globally
       }
     }
-    sessionStorage.setItem(sessionKey, String(Date.now()));
+    localStorage.setItem(sessionKey, String(Date.now()));
   } catch {}
 
   try {

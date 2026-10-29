@@ -367,32 +367,16 @@ export function stopSyncQueue(): void {
 // ==========================================
 
 if (typeof window !== 'undefined') {
-  // Re-attempt sync when internet connection is restored (Only in Admin mode)
+  // Resume pending uploads only when internet connection is restored and items are queued
   window.addEventListener('online', () => {
     if (!checkAdminPermission()) return;
-    console.log('[SyncManager] Network online detected. Resuming background upload queue...');
-    activateOnlineSession()
-      .then(() => processSyncQueue())
-      .catch(console.warn);
+    getLocalSyncQueueCount().then((count) => {
+      if (count > 0 && !isProcessing) {
+        console.log('[SyncManager] Network online detected with pending items. Processing queue...');
+        activateOnlineSession()
+          .then(() => processSyncQueue())
+          .catch(console.warn);
+      }
+    }).catch(() => {});
   });
-
-  // Re-attempt sync when user switches back to this browser tab (Only in Admin mode)
-  document.addEventListener('visibilitychange', () => {
-    if (!checkAdminPermission()) return;
-    if (document.visibilityState === 'visible' && navigator.onLine) {
-      processSyncQueue().catch(console.warn);
-    }
-  });
-
-  // Periodic heartbeat: check every 25s if pending items exist (Only in Admin mode)
-  setInterval(() => {
-    if (!checkAdminPermission()) return;
-    if (navigator.onLine && !isProcessing) {
-      getLocalSyncQueueCount().then((count) => {
-        if (count > 0) {
-          processSyncQueue().catch(console.warn);
-        }
-      }).catch(() => {});
-    }
-  }, 25000);
 }

@@ -57,6 +57,11 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
     );
   }, [localizedDiaries]);
 
+  // Reversed list for the side itinerary (newest first)
+  const listDiaries = useMemo(() => {
+    return [...sortedDiaries].reverse();
+  }, [sortedDiaries]);
+
   const [isLocating, setIsLocating] = useState(false);
   const [totalDistance, setTotalDistance] = useState(0);
   const [showVisitorMarkers, setShowVisitorMarkers] = useState(false);
@@ -511,9 +516,10 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
 
         {/* Scrollable list of stops */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-          {sortedDiaries.map((diary, index) => {
+          {listDiaries.map((diary, index) => {
             const coverPhoto = diary.photos.find(p => p.isCover) || diary.photos[0];
             const originalDiary = diaries.find(item => item.id === diary.id) || diary;
+            const sequenceNumber = sortedDiaries.length - index;
 
             return (
               <div
@@ -539,7 +545,7 @@ export const TravelMapView: React.FC<TravelMapViewProps> = ({
                     </div>
                   )}
                   <span className="absolute top-1 left-1 w-4 h-4 rounded-full bg-stone-900/80 text-white text-[10px] font-bold flex items-center justify-center">
-                    {index + 1}
+                    {sequenceNumber}
                   </span>
                 </div>
 

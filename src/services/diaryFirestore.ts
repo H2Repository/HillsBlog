@@ -625,21 +625,16 @@ export async function syncInitialDiariesOnline(
       let serverDeletedCount = 0;
       const changeLogs: ServerChangeLog[] = [];
 
-      // 1. Process server diaries
+      // 1. Process server diaries: merge with local
       for (const [id, remoteDiary] of remoteMap.entries()) {
         const local = localMap.get(id);
         if (!local) {
           serverAddedCount++;
           mergedMap.set(id, remoteDiary);
         } else if ((local.updatedAt || 0) > (remoteDiary.updatedAt || 0)) {
-          if (isAdminUser) {
-            try {
-              await saveDiaryToFirestoreInternal(local);
-              addedToServerCount++;
-            } catch (err) {
-              console.warn('[Sync] Failed to upload newer local edit:', id, err);
-            }
-          }
+          // Local has newer edit: keep local version.
+          // Note: Unsynced local edits are handled exclusively by the offline queue (processSyncQueue).
+          // Do NOT auto-upload all entries here to avoid burning Firestore write/bandwidth quotas!
           mergedMap.set(id, local);
         } else {
           if ((remoteDiary.updatedAt || 0) > (local.updatedAt || 0)) {
@@ -649,18 +644,11 @@ export async function syncInitialDiariesOnline(
         }
       }
 
-      // 2. Process local diaries that are not on the server
+      // 2. Process local diaries that are not yet on the server
       for (const [id, localDiary] of localMap.entries()) {
         if (!mergedMap.has(id)) {
+          // Keep locally in merged map without triggering bulk server uploads
           mergedMap.set(id, localDiary);
-          if (isAdminUser) {
-            try {
-              await saveDiaryToFirestoreInternal(localDiary);
-              addedToServerCount++;
-            } catch (err) {
-              console.warn('[Sync] Failed to auto-upload local diary:', id, err);
-            }
-          }
         }
       }
 
@@ -762,19 +750,30 @@ export async function fetchSingleDiaryOnline(diaryId: string): Promise<DiaryEntr
         (entry.totalPhotosCount && entry.totalPhotosCount > entry.photos.length) ||
         entry.photos.some((p) => !p.url || p.isChunked)
       ) {
-        try {
-          const subPhotos = await fetchDiaryFullPhotosInternal(entry.id);
-          if (subPhotos.length > 0) {
-            entry.photos = subPhotos;
+        // First check if high-resolution photos are already cached in local IndexedDB
+        const localEntry = await getLocalDiaryById(entry.id).catch(() => null);
+        if (
+          localEntry &&
+          localEntry.photos &&
+          localEntry.photos.length >= (entry.totalPhotosCount || 1) &&
+          localEntry.photos.some((p) => p.url && p.url.length > 50000)
+        ) {
+          entry.photos = localEntry.photos;
+        } else {
+          try {
+            const subPhotos = await fetchDiaryFullPhotosInternal(entry.id);
+            if (subPhotos.length > 0) {
+              entry.photos = subPhotos;
+            }
+          } catch (subErr) {
+            console.warn(`Subcollection load error for ${entry.id}:`, subErr);
           }
-        } catch (subErr) {
-          console.warn(`Subcollection load error for ${entry.id}:`, subErr);
         }
       }
 
       entry.totalPhotosCount = Math.max(entry.totalPhotosCount || 0, entry.photos.length);
 
-      // Requirement 1: Save read diary & full photos to local IndexedDB
+      // Save read diary & full photos to local IndexedDB for future instant offline access
       await saveLocalDiary(entry).catch((err) => {
         console.warn('saveLocalDiary in fetchSingleDiaryOnline note:', err);
       });
@@ -840,6 +839,21 @@ export async function saveDiaryToFirestoreInternal(entry: DiaryEntry): Promise<v
             chunks.push(p.url.slice(offset, offset + PHOTO_CHUNK_SIZE));
           }
 
+          // [Optimization] Check if this photo and its chunks already exist on server with same data length
+          // Reading 1 doc is much cheaper than writing N chunk docs for Free Tier quota.
+          try {
+            const existingSnap = await getDoc(photoDocRef);
+            if (existingSnap.exists()) {
+              const existing = existingSnap.data();
+              if (existing.isChunked && existing.totalLength === p.url.length && existing.chunkCount === chunks.length) {
+                // Photo already exists with same size/chunks, skip writing chunks again
+                continue;
+              }
+            }
+          } catch (e) {
+            console.warn(`[Save] Could not check existing photo ${p.id}, proceeding with write:`, e);
+          }
+
           // 1. Write the photo metadata document with isChunked: true and empty url
           await setDoc(photoDocRef, {
             id: p.id,
@@ -862,6 +876,15 @@ export async function saveDiaryToFirestoreInternal(entry: DiaryEntry): Promise<v
           }
         } else {
           // Fits comfortably inside single Firestore doc
+          // [Optimization] Only write if not present or different (simple check for fitting photos)
+          try {
+            const existingSnap = await getDoc(photoDocRef);
+            if (existingSnap.exists()) {
+              const existing = existingSnap.data();
+              if (existing.url === p.url) continue; 
+            }
+          } catch {}
+
           await setDoc(photoDocRef, {
             ...p,
             isChunked: false,
@@ -969,12 +992,16 @@ export async function incrementDiaryViews(diaryId: string): Promise<boolean> {
 
   const sessionKey = `visited_diary_${diaryId}`;
   try {
-    if (sessionStorage.getItem(sessionKey)) {
-      return false; // Already counted in this session
+    const lastVisited = localStorage.getItem(sessionKey);
+    if (lastVisited) {
+      const elapsed = Date.now() - Number(lastVisited);
+      if (elapsed < 60 * 60 * 1000) {
+        return false; // Already counted recently (within 1 hour)
+      }
     }
-    sessionStorage.setItem(sessionKey, String(Date.now()));
+    localStorage.setItem(sessionKey, String(Date.now()));
   } catch {
-    // sessionStorage unavailable
+    // localStorage unavailable
   }
 
   return await executeOnline(async () => {

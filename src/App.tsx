@@ -50,6 +50,7 @@ import { useAuth } from './context/AuthContext';
 import { getCachedDiaryTranslation, hasKorean, translateDiaryAsync } from './utils/translationService';
 import { 
   getAllLocalDiaries, 
+  getLocalDiaryById,
   saveLocalDiary,
   deleteLocalDiary,
   getLocalSyncQueueCount,
@@ -494,41 +495,12 @@ export default function App() {
       setTimeout(() => setToastMessage(null), 2500);
     };
 
-    const handleVisibilityOrFocus = async () => {
-      // Stop all background sync and refresh when admin is logged out!
-      if (!isAdminRef.current) return;
-
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
-        try {
-          const { diaries: freshDiaries, serverUpdatedCount, serverAddedCount, serverDeletedCount, error: syncError } = await syncInitialDiariesOnline();
-          if (syncError) {
-            console.warn('[Sync] Visibility refresh timeout:', syncError);
-            return;
-          }
-          if (freshDiaries && freshDiaries.length > 0) {
-            setDiaries(sortDiariesDescending(freshDiaries));
-          }
-          if ((serverUpdatedCount || 0) + (serverAddedCount || 0) + (serverDeletedCount || 0) > 0) {
-            setToastMessage({
-              text: '서버의 최신 수정 내용이 로컬 기기에 동기화되었습니다.',
-              type: 'success',
-            });
-            setTimeout(() => setToastMessage(null), 2000);
-          }
-        } catch {}
-      }
-    };
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    window.addEventListener('focus', handleVisibilityOrFocus);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
     };
   }, []);
 
@@ -795,15 +767,20 @@ export default function App() {
     }
   };
 
-  // 2. Click Diary: Immediately displays cached diary; only syncs/refreshes when in Admin mode
+  // 2. Click Diary: Immediately displays cached diary; fetches remote photos only if missing
   const handleSelectDiary = async (diary: DiaryEntry) => {
     let original = diaries.find((item) => item.id === diary.id) || diary;
 
     // Immediately show existing cached diary in modal for instant response
     setSelectedDiary(original);
 
-    // Only sync / refresh from server when logged in as Admin
-    if (isAdmin && typeof navigator !== 'undefined' && navigator.onLine) {
+    // Only sync / refresh from server when logged in as Admin and photos are missing
+    const needsPhotoFetch = isAdmin &&
+      typeof navigator !== 'undefined' &&
+      navigator.onLine &&
+      (original.hasSubcollectionPhotos || (original.totalPhotosCount && original.totalPhotosCount > original.photos.length) || original.photos.some((p) => !p.url || p.isChunked));
+
+    if (needsPhotoFetch) {
       setCloudSyncStatus('syncing');
       try {
         const refreshed = await fetchSingleDiaryOnline(diary.id);
@@ -829,8 +806,17 @@ export default function App() {
   // Handler: Open edit modal with full photos loaded if in subcollection (supports offline)
   const handleOpenEditDiary = async (d: DiaryEntry) => {
     let target = d;
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      if (d.hasSubcollectionPhotos || (d.totalPhotosCount && d.totalPhotosCount > d.photos.length)) {
+    // Check if full photos already exist in local IndexedDB
+    const localEntry = await getLocalDiaryById(d.id).catch(() => null);
+    if (
+      localEntry &&
+      localEntry.photos &&
+      localEntry.photos.length >= (d.totalPhotosCount || 1) &&
+      localEntry.photos.every((p) => p.url && !p.isChunked && p.url.length > 500)
+    ) {
+      target = { ...target, photos: localEntry.photos };
+    } else if (typeof navigator !== 'undefined' && navigator.onLine) {
+      if (d.hasSubcollectionPhotos || (d.totalPhotosCount && d.totalPhotosCount > d.photos.length) || d.photos.some((p) => !p.url || p.isChunked)) {
         try {
           const fullPhotos = await fetchDiaryFullPhotos(d.id);
           if (fullPhotos.length > 0) {
@@ -950,7 +936,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col font-sans selection:bg-amber-200 selection:text-amber-900 pb-12 sm:pb-14">
+    <div className="min-h-screen min-h-[100dvh] bg-stone-100 text-stone-900 flex flex-col font-sans selection:bg-amber-200 selection:text-amber-900">
       {/* Top Navbar */}
       <Navbar
         viewMode={viewMode}
@@ -969,32 +955,6 @@ export default function App() {
         pendingSyncCount={pendingSyncCount}
         onTriggerSync={handleTriggerSync}
       />
-
-      {/* Pending Sync Alert Bar (Requirement: Top display for unsynced items) */}
-      {isAdmin && pendingSyncCount > 0 && (
-        <div className={`px-4 py-2 text-center text-xs font-bold shadow-md animate-in slide-in-from-top duration-300 flex items-center justify-center gap-2 ${
-          cloudSyncStatus === 'limit'
-            ? 'bg-rose-600 text-white'
-            : 'bg-amber-500 text-stone-950'
-        }`}>
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>
-            {cloudSyncStatus === 'limit'
-              ? `서버 할당량 초과(limit): 오프라인 상태에서 추가, 수정 또는 삭제된 일기가 ${pendingSyncCount}건 안전하게 보관 중입니다.`
-              : `오프라인 상태에서 추가, 수정 또는 삭제된 일기가 ${pendingSyncCount}건 있습니다.`}
-          </span>
-          <button 
-            onClick={handleTriggerSync}
-            className={`ml-2 px-2.5 py-0.5 rounded transition text-[10px] cursor-pointer ${
-              cloudSyncStatus === 'limit'
-                ? 'bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-400/40'
-                : 'bg-stone-900 text-white hover:bg-stone-800'
-            }`}
-          >
-            {cloudSyncStatus === 'limit' ? '재시도' : '지금 동기화'}
-          </button>
-        </div>
-      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -1069,8 +1029,8 @@ export default function App() {
         )}
       </main>
 
-      {/* Fixed Bottom Footer */}
-      <footer className="fixed bottom-0 left-0 right-0 z-30 bg-stone-900/95 text-stone-300 border-t border-stone-800 backdrop-blur-md shadow-lg py-2 sm:py-2.5">
+      {/* Natural Bottom Footer */}
+      <footer className="mt-auto bg-stone-900 text-stone-300 border-t border-stone-800 py-3 sm:py-3.5 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-bold text-white tracking-tight truncate">{t('appTitle')}</span>
