@@ -1,34 +1,36 @@
-import { pgTable, serial, text, timestamp, integer, boolean } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
   uid: text('uid').notNull().unique(), // Firebase Auth UID
   email: text('email').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+  createdAt: integer('created_at').default(Date.now()),
 });
 
-export const diaries = pgTable('diaries', {
-  id: text('id').primaryKey(), // Firebase diary ID
+export const diaries = sqliteTable('diaries', {
+  id: text('id').primaryKey(),
   title: text('title').notNull(),
   content: text('content').notNull(),
   date: text('date').notNull(),
   time: text('time').notNull(),
-  lat: text('lat'),
-  lng: text('lng'),
-  region: text('region'),
-  address: text('address'),
-  weather: text('weather'),
-  rating: integer('rating'),
+  // JSON fields for complex objects
+  location: text('location', { mode: 'json' }).notNull(),
+  photos: text('photos', { mode: 'json' }).notNull(),
+  weather: text('weather').notNull(),
+  moodTags: text('mood_tags', { mode: 'json' }).notNull(),
+  localInsights: text('local_insights', { mode: 'json' }).notNull(),
+  rating: integer('rating').notNull(),
   views: integer('views').default(0),
-  hasSubcollectionPhotos: boolean('has_subcollection_photos'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
+  hasSubcollectionPhotos: integer('has_subcollection_photos', { mode: 'boolean' }),
+  totalPhotosCount: integer('total_photos_count'),
+  includeInDistance: integer('include_in_distance', { mode: 'boolean' }),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
 });
 
-export const visitor_logs = pgTable('visitor_logs', {
+export const visitorLogs = sqliteTable('visitor_logs', {
   id: text('id').primaryKey(),
-  timestamp: timestamp('timestamp').notNull(),
+  timestamp: integer('timestamp').notNull(),
   lat: text('lat'),
   lng: text('lng'),
   city: text('city'),

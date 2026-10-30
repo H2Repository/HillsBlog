@@ -31,7 +31,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { isDiaryPendingSync } from '../utils/syncManager';
-import { fetchDiaryFullPhotos } from '../services/diaryFirestore';
 
 interface DiaryDetailModalProps {
   diary: DiaryEntry | null;
@@ -131,26 +130,6 @@ export const DiaryDetailModal: React.FC<DiaryDetailModalProps> = ({
       };
     }
   }, [isOpen, diary, language, showOriginal]);
-
-  // Ensure full photos are loaded if diary currently has only partial photos
-  useEffect(() => {
-    if (!isOpen || !diary) return;
-    const expected = Math.max(diary.totalPhotosCount || 0, diary.photos?.length || 0);
-    if ((expected > diary.photos.length || diary.hasSubcollectionPhotos) && diary.id) {
-      let isCancelled = false;
-      fetchDiaryFullPhotos(diary.id)
-        .then((fullPhotos) => {
-          if (!isCancelled && fullPhotos && fullPhotos.length > diary.photos.length) {
-            diary.photos = fullPhotos;
-            setAsyncDiary((prev) => (prev ? { ...prev, photos: fullPhotos } : { ...diary, photos: fullPhotos }));
-          }
-        })
-        .catch(() => {});
-      return () => {
-        isCancelled = true;
-      };
-    }
-  }, [isOpen, diary?.id]);
 
   useEffect(() => {
     if (!isOpen || !diary) return;

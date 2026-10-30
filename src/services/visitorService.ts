@@ -1,22 +1,9 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  onSnapshot, 
-  getDocs, 
-  query, 
-  orderBy, 
-  limit 
-} from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
 import { VisitorLog } from '../types';
-import { checkAdminPermission, executeOnline } from './diaryFirestore';
 
-const VISITOR_LOGS_COLLECTION = 'visitor_logs';
+const API_BASE = '/api';
 
 /**
- * Anonymizes an IP address for privacy protection (e.g. 123.45.67.89 -> 123.45.67.***)
+ * Anonymizes an IP address for privacy protection
  */
 function maskIp(ip?: string): string {
   if (!ip) return '***';
@@ -50,7 +37,6 @@ function detectDevice(): string {
 
 /**
  * Fetches geographical location for the current visitor.
- * Uses fast IP geolocation with fallback to browser timezone heuristic.
  */
 async function fetchVisitorGeoLocation(): Promise<{
   lat: number;
@@ -60,7 +46,6 @@ async function fetchVisitorGeoLocation(): Promise<{
   region: string;
   ipMasked: string;
 }> {
-  // Try 1: ipwho.is (fast and highly accurate)
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -68,7 +53,7 @@ async function fetchVisitorGeoLocation(): Promise<{
     clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.success !== false && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+      if (data && data.success !== false) {
         return {
           lat: data.latitude,
           lng: data.longitude,
@@ -79,88 +64,25 @@ async function fetchVisitorGeoLocation(): Promise<{
         };
       }
     }
-  } catch {
-    // Fall through to Try 2
-  }
-
-  // Try 2: freeipapi.com
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch('https://freeipapi.com/api/json', { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
-        return {
-          lat: data.latitude,
-          lng: data.longitude,
-          city: data.cityName || '알 수 없음',
-          country: data.countryName || '대한민국',
-          region: data.regionName || '',
-          ipMasked: maskIp(data.ipAddress),
-        };
-      }
-    }
-  } catch {
-    // Fall through to heuristic fallback
-  }
-
-  // Fallback based on client timezone
-  let defaultCity = '서울';
-  let defaultLat = 37.5665;
-  let defaultLng = 126.9780;
-  let defaultCountry = '대한민국';
-
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz.includes('Tokyo')) {
-      defaultCity = '도쿄';
-      defaultCountry = '일본';
-      defaultLat = 35.6762;
-      defaultLng = 139.6503;
-    } else if (tz.includes('Bangkok') || tz.includes('Ho_Chi_Minh')) {
-      defaultCity = '하노이';
-      defaultCountry = '베트남';
-      defaultLat = 21.0285;
-      defaultLng = 105.8542;
-    } else if (tz.includes('New_York')) {
-      defaultCity = '뉴욕';
-      defaultCountry = '미국';
-      defaultLat = 40.7128;
-      defaultLng = -74.0060;
-    }
   } catch {}
 
   return {
-    lat: defaultLat,
-    lng: defaultLng,
-    city: defaultCity,
-    country: defaultCountry,
+    lat: 37.5665,
+    lng: 126.9780,
+    city: '서울',
+    country: '대한민국',
     region: '',
     ipMasked: '***',
   };
 }
 
 /**
- * Records a visitor's location and viewed content into Firestore.
- * Automatically skips if:
- * 1. Current user is admin
- * 2. No specific diary was clicked (only logs when a diary is clicked/read)
- * 3. User agent is a known bot/crawler
+ * Records a visitor's location and viewed content into SQLite via API.
  */
 export async function recordVisitorLocation(diaryId?: string, diaryTitle?: string): Promise<void> {
-  // 1. 일기 내용을 클릭한 경우에만 기록 (홈 피드 단순 진입이나 ID 없는 호출 차단)
-  if (!diaryId) {
-    return;
-  }
+  if (!diaryId) return;
 
-  // 2. 관리자 모드인 경우 기록 제외
-  if (checkAdminPermission()) {
-    return;
-  }
-
-  // 3. 웹 크롤러 / 점검 봇 제외
+  // Skip if user agent is a bot
   if (typeof navigator !== 'undefined') {
     const ua = navigator.userAgent || '';
     if (/bot|googlebot|crawler|spider|robot|crawling|headless/i.test(ua)) {
@@ -168,15 +90,13 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
     }
   }
 
-  // Prevent spamming in same browser across tabs within 30 minutes (global session debounce)
+  // Session debounce
   const sessionKey = `visitor_loc_logged_global`;
   try {
     const lastLogged = localStorage.getItem(sessionKey);
     if (lastLogged) {
       const elapsed = Date.now() - Number(lastLogged);
-      if (elapsed < 30 * 60 * 1000) {
-        return; // Already logged recently globally
-      }
+      if (elapsed < 30 * 60 * 1000) return;
     }
     localStorage.setItem(sessionKey, String(Date.now()));
   } catch {}
@@ -199,9 +119,10 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
       ipMasked: geo.ipMasked,
     };
 
-    await executeOnline(async () => {
-      const docRef = doc(db, VISITOR_LOGS_COLLECTION, logId);
-      await setDoc(docRef, logEntry);
+    await fetch(`${API_BASE}/visitor-logs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(logEntry),
     });
   } catch (err) {
     console.warn('Could not record visitor location:', err);
@@ -209,50 +130,44 @@ export async function recordVisitorLocation(diaryId?: string, diaryTitle?: strin
 }
 
 /**
- * Fetches visitor logs on-demand online and switches back to offline
+ * Fetches visitor logs from SQLite API.
  */
 export async function fetchVisitorLogsOnline(): Promise<VisitorLog[]> {
-  return await executeOnline(async () => {
-    const colRef = collection(db, VISITOR_LOGS_COLLECTION);
-    const q = query(colRef, orderBy('timestamp', 'desc'), limit(150));
-    const snap = await getDocs(q);
-    const list: VisitorLog[] = [];
-    snap.forEach((docSnap) => {
-      const data = docSnap.data() as VisitorLog;
-      if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
-        list.push(data);
-      }
-    });
-    return list;
-  });
+  try {
+    const res = await fetch(`${API_BASE}/visitor-logs`);
+    if (!res.ok) throw new Error('Failed to fetch visitor logs');
+    return await res.json();
+  } catch (err) {
+    console.error('Error fetching visitor logs:', err);
+    return [];
+  }
 }
 
 /**
- * Subscribes to real-time visitor logs from Firestore (Admin only)
+ * Subscribes to visitor logs (Polling fallback for SQLite since no real-time push like Firestore)
  */
 export function subscribeVisitorLogs(
   onUpdate: (logs: VisitorLog[]) => void,
-  onError?: (error: Error) => void
+  _onError?: (error: Error) => void
 ): () => void {
-  // Initial on-demand fetch
-  fetchVisitorLogsOnline().then(onUpdate).catch((err) => {
-    if (onError) onError(err);
-  });
-
-  return () => {};
+  fetchVisitorLogsOnline().then(onUpdate);
+  const interval = setInterval(() => {
+    fetchVisitorLogsOnline().then(onUpdate);
+  }, 30000); // 30s poll
+  return () => clearInterval(interval);
 }
 
 /**
- * Clears all visitor location logs from Firestore (Admin operation)
+ * Clears all visitor logs.
  */
 export async function clearAllVisitorLogs(): Promise<void> {
-  if (!checkAdminPermission()) {
-    throw new Error('방문자 위치 기록 초기화는 관리자만 가능합니다.');
+  try {
+    const res = await fetch(`${API_BASE}/visitor-logs`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to clear visitor logs');
+  } catch (err) {
+    console.error('Error clearing logs:', err);
   }
-
-  return await executeOnline(async () => {
-    const snap = await getDocs(collection(db, VISITOR_LOGS_COLLECTION));
-    const deletions = snap.docs.map((d) => deleteDoc(doc(db, VISITOR_LOGS_COLLECTION, d.id)));
-    await Promise.all(deletions);
-  });
 }
+

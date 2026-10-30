@@ -140,24 +140,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Sync Status Badge (Responsive) */}
             <div 
               className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-full border transition-all duration-300 ${
-                cloudSyncStatus === 'limit'
-                  ? 'bg-rose-950/40 border-rose-500/60 text-rose-400 shadow-sm shadow-rose-900/30'
-                  : cloudSyncStatus === 'syncing' 
+                cloudSyncStatus === 'syncing' 
                   ? 'bg-amber-950/30 border-amber-500/40 text-amber-300 shadow-sm shadow-amber-900/20' 
                   : cloudSyncStatus === 'offline'
-                  ? 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+                  ? 'bg-stone-800/80 border-stone-700/80 text-stone-400'
                   : 'bg-stone-800/80 border-stone-700/80 text-emerald-400'
               }`}
               title={
-                cloudSyncStatus === 'limit' ? '서버 무료 할당량 초과 (Quota limit exceeded): 서버와 오프라인으로 전환되었습니다. 작성한 일기는 로컬에 안전하게 보존됩니다.' :
                 cloudSyncStatus === 'syncing' ? '서버와 데이터를 동기화하는 중입니다...' :
-                cloudSyncStatus === 'offline' ? '현재 오프라인 상태입니다. 작업 내용은 로컬에 저장됩니다.' :
+                cloudSyncStatus === 'offline' ? '현재 오프라인 상태입니다.' :
                 '서버와 정상적으로 연결되었습니다.'
               }
             >
-              {cloudSyncStatus === 'limit' ? (
-                <CloudOff className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-              ) : cloudSyncStatus === 'syncing' ? (
+              {cloudSyncStatus === 'syncing' ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : cloudSyncStatus === 'offline' ? (
                 <CloudOff className="w-3.5 h-3.5" />
@@ -166,16 +161,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
               
               <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-tight">
-                {cloudSyncStatus === 'limit' ? (
-                  <span className="flex items-center gap-1">
-                    <span className="text-rose-400 font-bold lowercase tracking-normal">limit</span>
-                    {pendingSyncCount > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-md bg-rose-500 text-white font-mono text-[9px] shadow-xs">
-                        {pendingSyncCount}
-                      </span>
-                    )}
-                  </span>
-                ) : pendingSyncCount > 0 ? (
+                {pendingSyncCount > 0 ? (
                   <span className="flex items-center gap-1">
                     <span className="hidden lg:inline text-amber-400">대기</span>
                     <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-stone-900 shadow-xs">
@@ -405,32 +391,22 @@ export const Navbar: React.FC<NavbarProps> = ({
                         className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-stone-800 text-left transition group cursor-pointer border border-transparent hover:border-stone-700 disabled:opacity-60"
                       >
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center border transition shrink-0 ${
-                          cloudSyncStatus === 'limit'
-                            ? 'bg-rose-950/50 text-rose-400 border-rose-500/40'
+                          cloudSyncStatus === 'syncing'
+                            ? 'bg-amber-600/20 text-amber-400 border-amber-500/40'
                             : 'bg-stone-800 group-hover:bg-sky-600/20 text-sky-400 border-stone-700 group-hover:border-sky-500/40'
                         }`}>
                           {cloudSyncStatus === 'syncing' ? (
                             <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                          ) : cloudSyncStatus === 'limit' ? (
-                            <CloudOff className="w-4 h-4 text-rose-500" />
                           ) : (
                             <Cloud className="w-4 h-4" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-bold transition flex items-center gap-1.5 ${
-                            cloudSyncStatus === 'limit' ? 'text-rose-400' : 'text-white group-hover:text-sky-300'
-                          }`}>
-                            <span>클라우드 데이터 동기화</span>
-                            {cloudSyncStatus === 'limit' && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-400 font-mono border border-rose-500/30">
-                                limit
-                              </span>
-                            )}
+                          <p className="text-xs font-bold text-white group-hover:text-sky-300 transition">
+                            클라우드 데이터 동기화
                           </p>
                           <p className="text-[11px] text-stone-400 truncate">
                             {cloudSyncStatus === 'syncing' ? '서버와 실시간 동기화 진행 중...' :
-                             cloudSyncStatus === 'limit' ? '서버 무료 할당량 초과 (오프라인 모드 유지)' :
                              '서버 최신 일기 불러오기 및 로컬 동기화'}
                           </p>
                         </div>

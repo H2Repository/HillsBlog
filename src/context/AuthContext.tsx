@@ -7,7 +7,6 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { disableFirestoreNetwork } from '../services/diaryFirestore';
 import { stopSyncQueue } from '../utils/syncManager';
 
 // Designated Admin Email from system metadata
@@ -73,7 +72,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     closeLoginModal();
     // Stop sync and refresh operations when admin logs out
     stopSyncQueue();
-    disableFirestoreNetwork().catch(() => {});
     if (isAuto) {
       setAutoLogoutNotice('10분 동안 아무런 활동이 없어 보안을 위해 자동 로그아웃되었습니다.');
     }
